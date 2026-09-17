@@ -1,0 +1,99 @@
+{
+  "jobs": [
+    {
+      "absolute_url": "https://careers.examplecorp.com/jobs/8653419002?gh_jid=8653419002",
+      "data_compliance": [
+        {
+          "type": "gdpr",
+          "requires_consent": false,
+          "requires_processing_consent": false,
+          "requires_retention_consent": false,
+          "retention_period": null,
+          "demographic_data_consent_applies": false
+        }
+      ],
+      "internal_job_id": 6455838002,
+      "location": {
+        "name": "Remote - Illinois"
+      },
+      "metadata": [
+        {
+          "id": 10945305002,
+          "name": "Division",
+          "value": "Engineering",
+          "value_type": "single_select"
+        }
+      ],
+      "id": 8653419002,
+      "updated_at": "2026-08-21T13:02:33-04:00",
+      "requisition_id": "R-01182",
+      "title": "Senior Backend Engineer",
+      "company_name": "ExampleCorp",
+      "first_published": "2026-07-28T09:47:45-04:00",
+      "language": "en",
+      "application_deadline": null,
+      "departments": [
+        {
+          "id": 4049810002,
+          "name": "Engineering",
+          "child_ids": [],
+          "parent_id": 4077379002
+        }
+      ],
+      "offices": [
+        {
+          "id": 4039388002,
+          "name": "Remote",
+          "location": "Remote",
+          "child_ids": [],
+          "parent_id": null
+        }
+      ],
+      "content": "&lt;p&gt;We are hiring a backend engineer.&lt;/p&gt;\n&lt;p&gt;You\u2019ll build things.&lt;/p&gt;",
+      "ai_disclaimer": null,
+      "include_ai_disclaimer": false,
+      "ai_opt_out_request_url": null
+    },
+    {
+      "absolute_url": "https://careers.examplecorp.com/jobs/8806187002?gh_jid=8806187002",
+      "data_compliance": [],
+      "internal_job_id": 6455839002,
+      "location": {
+        "name": "Mexico City, Mexico"
+      },
+      "metadata": [],
+      "id": 8806187002,
+      "updated_at": "2026-09-02T11:15:00-05:00",
+      "requisition_id": "R-01199",
+      "title": "Staff Platform Engineer",
+      "company_name": "ExampleCorp",
+      "first_published": "2026-09-01T08:00:00-05:00",
+      "language": "en",
+      "application_deadline": null,
+      "departments": [
+        {
+          "id": 4049811002,
+          "name": "Platform",
+          "child_ids": [],
+          "parent_id": null
+        }
+      ],
+      "offices": [
+        {
+          "id": 4039389002,
+          "name": "LATAM",
+          "location": "Mexico City",
+          "child_ids": [],
+          "parent_id": null
+        }
+      ],
+      "content": "&lt;p&gt;Platform role.&lt;/p&gt;",
+      "ai_disclaimer": null,
+      "include_ai_disclaimer": false,
+      "ai_opt_out_request_url": null
+    }
+  ],
+  "meta": {
+    "total": 2
+  }
+}

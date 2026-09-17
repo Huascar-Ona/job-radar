@@ -1,0 +1,34 @@
+{
+  "jobs": [
+    {
+      "id": 9000000001,
+      "internal_job_id": 7000000001,
+      "title": "Engineer, Unknown Department",
+      "updated_at": "2026-09-10T00:00:00Z",
+      "location": {
+        "name": null
+      },
+      "absolute_url": "https://careers.examplecorp.com/jobs/9000000001",
+      "metadata": [],
+      "departments": []
+    },
+    {
+      "id": 9000000002,
+      "internal_job_id": 7000000002,
+      "title": "Engineer, Null Fields",
+      "updated_at": null,
+      "first_published": null,
+      "location": null,
+      "absolute_url": "https://careers.examplecorp.com/jobs/9000000002",
+      "departments": null,
+      "content": null
+    },
+    {
+      "title": "Broken Entry Without Id",
+      "absolute_url": "https://careers.examplecorp.com/jobs/unknown"
+    }
+  ],
+  "meta": {
+    "total": 3
+  }
+}

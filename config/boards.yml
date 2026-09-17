@@ -1,0 +1,23 @@
+# Configured job boards (ADR-0012).
+#
+# This file is the sole source of configured boards for the MVP. It is
+# reconciled into the `companies` table at the start of each run.
+#
+#   source        provider identifier; only "greenhouse" is supported
+#   board_token   provider-scoped board id; the stable company identity
+#   display_name  mutable metadata, carries no identity
+#   enabled       whether the board is crawled
+#
+# A board removed from this file is marked disabled, never deleted, so that
+# historical jobs and crawl outcomes keep their foreign keys.
+
+boards:
+  - source: greenhouse
+    board_token: duolingo
+    display_name: Duolingo
+    enabled: true
+
+  - source: greenhouse
+    board_token: gitlab
+    display_name: GitLab
+    enabled: false
