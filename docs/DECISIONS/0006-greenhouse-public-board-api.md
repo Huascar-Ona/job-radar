@@ -51,3 +51,38 @@ permanently NULL for Greenhouse. That was wrong; the field is now mapped
 observed rather than contractually guaranteed by published documentation,
 which was not consulted. A job lacking it normalizes to NULL rather than
 failing.
+
+## Addendum, 2026-09-19: documentation consulted
+
+The section above notes that published documentation "was not consulted". It
+has been since, ahead of implementing the collector. The decision to use the
+public Board API with `content=true` is unchanged. What the documentation adds:
+
+- The endpoint and its lack of authentication are **documented**, as is the set
+  of fields `content=true` adds and the fact that `content` carries HTML
+  entities encoded.
+- **`first_published` is not a documented field.** It appears only in an
+  official response *example*. That is stronger than pure observation and
+  weaker than a guarantee, so the nullable treatment above stands for a better
+  reason than it was originally given.
+- **Pagination remains inferred, not documented.** No pagination parameters are
+  described; `meta.total` matched `len(jobs)` on every board sampled, up to 882
+  jobs.
+- **Rate limits remain unknown.** Absent from the documentation, and no
+  `RateLimit` or `Retry-After` headers are returned. This absence is what makes
+  a retry policy unjustifiable today (ADR-0016).
+- **Identifier uniqueness and stability remain undocumented**, as recorded in
+  ADR-0014.
+- **`content=true` is matched literally.** `content=1`, `content=false` and
+  `content=bogus` all return a response without `content`, `departments` or
+  `offices`.
+- **Error responses are not reliably JSON.** A missing board returns
+  `{"status":404,"error":"Job not found"}`, but a malformed path returns
+  `text/html`. The collector must classify on status and never require a
+  parseable body.
+- Applying is a **separate authenticated endpoint**, which is why `apply_url`
+  is null rather than a copy of `absolute_url`.
+
+A second sample on the same date covered six boards and 2,610 postings; the
+full table is in SPEC.md. One earlier claim did not survive it: `departments`
+can be empty, so "every sampled job had exactly one entry" is no longer true.

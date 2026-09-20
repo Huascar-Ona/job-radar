@@ -24,3 +24,4 @@ supersedes the old one; the old file stays and is marked superseded.
 | [0013](0013-source-consistency-composite-key.md) | Source consistency via a composite foreign key | Accepted |
 | [0014](0014-retain-jobs-source.md) | Retain jobs.source despite being derivable | Accepted |
 | [0015](0015-upsert-outcome-classification.md) | Classify upsert outcomes from the row | Accepted |
+| [0016](0016-greenhouse-ingestion-boundary.md) | Greenhouse ingestion boundary, errors and retries | Accepted |

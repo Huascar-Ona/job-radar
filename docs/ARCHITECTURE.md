@@ -159,6 +159,38 @@ Isolation is structural, not incidental:
 Companies are crawled sequentially in the MVP (ADR-0009). Concurrency is a
 later optimization that must be weighed against source rate limits.
 
+**The MVP performs no HTTP retries** (ADR-0016). This records an absence of
+evidence, not a permanent prohibition: no rate-limit behavior is documented or
+observable, so any backoff would be invented. The next scheduled crawl is the
+retry, and `crawl_company_results` accumulates the evidence that would justify
+a real policy.
+
+## Collector and normalizer responsibilities
+
+The two halves of a source integration answer different questions, and the
+error each raises says which half failed.
+
+| | Collector | Normalizer |
+|---|---|---|
+| Knows | transport, provider endpoints | provider field semantics, the normalized contract |
+| Never knows | Job Radar domain semantics | HTTP, persistence |
+| Does | build the URL, GET with a bounded timeout, classify status, decode JSON, verify the response envelope, return provider payloads | translate one provider posting into a `NormalizedJob` |
+| Never does | build `NormalizedJob`, decide observation times, write to the database, filter postings | perform I/O of any kind |
+| Raises | `CollectorError` — the provider did not deliver a usable board | `NormalizationError` — the board arrived but one posting cannot be converted |
+
+The envelope check sits with the collector because it asks whether the
+response is a Job Board API response at all, not whether any posting is valid.
+
+**A malformed posting must not invalidate the rest of the board.** One
+`NormalizationError` counts as `invalid` for that company; the company still
+succeeds. Only a `CollectorError` fails it. This is what makes the `invalid`
+counter reachable, and it constrains the ingestion service: it must catch
+normalization failures per posting rather than per board.
+
+Unknown provider fields are tolerated at the collector boundary — providers add
+fields — while `NormalizedJob` forbids extras. Tolerant at the edge, strict in
+the domain.
+
 ## Crawl outcomes
 
 Crawl outcomes are first-class persisted data, not just log lines

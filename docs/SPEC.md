@@ -81,7 +81,7 @@ first-class column to reason about instead of parsing `raw_data`.
 The system must:
 
 1. Fetch jobs from configured Greenhouse boards using the public Board API
-   with `content=true` (ADR-0006).
+   with the literal query parameter `content=true` (ADR-0006).
 2. Normalize Greenhouse responses into the common Job model.
 3. Persist jobs in PostgreSQL.
 4. Prevent duplicate jobs.
@@ -101,10 +101,10 @@ The system must:
 | company | configured display name for the board token |
 | title | `title` |
 | location | `location.name`, null when `location` is null |
-| department | `departments[0].name`, null when absent or empty |
-| description | `content`, HTML-unescaped |
-| job_url | `absolute_url` |
-| apply_url | null — no distinct apply URL is exposed |
+| department | `departments[0].name`; null when the array is absent or empty |
+| description | `content`, HTML-unescaped **exactly once** |
+| job_url | `absolute_url`, verbatim and never host-restricted |
+| apply_url | null — applying is a separate authenticated endpoint, not a field |
 | source_published_at | `first_published` |
 | source_updated_at | `updated_at` |
 | raw_data | the unmodified job object as received |
@@ -117,21 +117,58 @@ never stored numerically.
 for a given job, `source_published_at` is null; it is never backfilled from
 `first_seen_at` or from `updated_at`.
 
+## Documented provider guarantees
+
+Taken from the Greenhouse Job Board API documentation, consulted 2026-09-19.
+These are the only statements the provider actually makes; everything else in
+this section is observation.
+
+- The list endpoint is `GET /v1/boards/{board_token}/jobs` and **requires no
+  authentication**.
+- `id` identifies the job **post**; `internal_job_id` identifies the **job**.
+- `internal_job_id` is **null for prospect posts**.
+- `metadata` may be null.
+- `content=true` adds `content`, `departments` and `offices`.
+- `content` is returned with **HTML entities encoded**.
+- Submitting an application is a **separate authenticated endpoint**
+  (`POST /v1/boards/{board_token}/jobs/{id}`), not `absolute_url`.
+
+Explicitly **not** documented, and therefore not assumed:
+
+| Question | Status |
+|---|---|
+| Uniqueness scope of `id` | **Undocumented** (ADR-0014) |
+| Stability of `id` across crawls, and behavior on repost | **Undocumented** |
+| Pagination | **Inferred absent** — no pagination parameters are documented, and `meta.total` equalled `len(jobs)` in every sample |
+| Rate limits | **Unknown** — absent from the documentation, and no `RateLimit` or `Retry-After` headers were returned |
+| `first_published` | **Not documented as a field.** It appears only in an official response *example*. Treated as nullable best-effort |
+| `company_name` | Not documented as a field; appears in an official example |
+| Error response format | Undocumented; see below |
+
 ## Observed source behavior
 
-Verified on 2026-09-15 against three public boards (458 jobs total). See
-`tests/fixtures/greenhouse/README.md`.
+Verified 2026-09-15 against three public boards (458 jobs), and again
+2026-09-19 against six public boards (2,610 jobs). Observation, not contract.
+See `tests/fixtures/greenhouse/README.md`.
 
 | Observation | Consequence for the MVP |
 |---|---|
-| `meta.total` equalled `len(jobs)` on every board, up to 222 jobs in one response | No pagination is implemented. A future mismatch between the two is a hard error, not a silent truncation. |
-| `first_published` present and non-null on 458/458 jobs | `source_published_at` is populated for Greenhouse. Newness is source-relative, not merely radar-relative. |
-| `departments`, `offices` and `content` are returned **only** when `content=true` | `content=true` is mandatory, not an optimization: three required fields depend on it. |
-| `departments[]` carries a hierarchy (`parent_id`, `child_ids`); every sampled job had exactly one entry | Only `departments[0].name` is normalized. The full array stays in `raw_data`; hierarchy flattening is deferred. |
-| `content` is HTML-escaped (`&lt;p&gt;`) | The normalizer unescapes once. Double-unescaping is a defect. |
+| `meta.total` equalled `len(jobs)` on every board, up to 882 jobs in one response | No pagination is implemented. A future mismatch between the two is a hard error, not a silent truncation. |
+| `first_published` present and non-null on 2,610/2,610 jobs | `source_published_at` is populated for Greenhouse. Newness is source-relative, not merely radar-relative. The field is nonetheless undocumented, so absence must normalize to null rather than fail. |
+| `departments`, `offices` and `content` are returned **only** when `content=true`, and the parameter is matched **literally**: `content=1`, `content=false` and `content=bogus` all omit them | The collector must send the exact string `true`. |
+| `departments[]` carries a hierarchy (`parent_id`, `child_ids`). **2,608 of 2,610 jobs had exactly one entry; 2 had none. More than one was never observed** | Empty is a real case and normalizes to null. Only `departments[0].name` is normalized; if several are ever returned, the first is taken. The full array stays in `raw_data`, and a second entry appearing later is evidence for revisiting the normalized representation. |
+| `content` is HTML-escaped (`&lt;p&gt;`). **Unescaping twice changes the text on 2,412 of 2,610 jobs** | The normalizer unescapes **exactly once**. Double-unescaping is a defect, not a cosmetic issue: `&amp;lt;` would become `<`. |
 | `updated_at` and `first_published` carry varying UTC offsets (`-04:00`, `-05:00`), never `Z` | Offsets must be parsed and converted to UTC, not truncated. |
+| `location` is an object whose only key is `name`, non-null on 2,610/2,610, but frequently **compound**: `"San Francisco, CA \| Seattle, WA"`, or a list of a dozen places | `location` is free text carried across verbatim. Any future geographic filtering must parse it, not match it. |
+| `offices[]` held 0 to 6 entries | Not used for `location`; kept in `raw_data`. |
+| `absolute_url` used five distinct hosts including **customer-owned domains** (`databricks.com`, `stripe.com`, `careers.duolingo.com`) | `job_url` must **not** be host-restricted or pattern-validated. |
+| One `internal_job_id` mapped to as many as **14 posts** on a single board | Reinforces that `id` is a post, not a job, and that repost tracking would need `internal_job_id` (ADR-0014, deferred). |
+| 266 of 2,610 titles carried leading or trailing whitespace | The domain's `RequiredText` strips; no normalizer-side handling needed. |
+| `education` was **absent entirely** on 1,918 jobs and present on 692 | Absent and null are distinct cases. The source schema must tolerate both. |
+| **404 returned a JSON body, but a malformed path returned `text/html`** | An error response **cannot be assumed to be JSON**. The collector classifies on status first and must not require a parseable body. |
+| `ETag` is returned and `If-None-Match` yields `304` | Conditional requests are viable. Deliberately **out of the MVP** (ADR-0016); recorded as a future optimization with evidence. |
 | `company_name` is present in the payload | Ignored for identity and display. Configuration remains authoritative (ADR-0007). It may be used later as a drift check against `display_name`. |
-| Jobs with `content=true` averaged ~10 KB and peaked at ~13 KB each; the board payload grew 79 KB to 1.0 MB | Drives the `content_hash` guard on `raw_data` (ADR-0011). |
+| Jobs with `content=true` averaged ~8.5 KB and peaked at ~23 KB; the board payload grew 79 KB to 1.0 MB (x12.6) | Drives the `content_hash` guard on `raw_data` (ADR-0011). |
 
 Fields observed but deliberately not normalized in the MVP:
 `internal_job_id`, `requisition_id`, `metadata`, `offices`, `language`,
