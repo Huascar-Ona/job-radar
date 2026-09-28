@@ -118,3 +118,32 @@ def test_persistence_uses_no_greenhouse_field_names(path: Path) -> None:
     text_content = path.read_text(encoding="utf-8").lower()
     for name in GREENHOUSE_ONLY_NAMES:
         assert name not in text_content, f"{path.name} references {name!r}"
+
+
+# --- collectors may reach the network, never the database -------------------
+
+import job_radar.collectors  # noqa: E402
+
+COLLECTORS_ROOT = Path(job_radar.collectors.__file__).parent
+
+
+def collector_modules() -> list[Path]:
+    return sorted(COLLECTORS_ROOT.rglob("*.py"))
+
+
+def test_collectors_package_is_not_empty() -> None:
+    assert collector_modules()
+
+
+@pytest.mark.parametrize("path", collector_modules(), ids=lambda p: p.name)
+def test_collectors_import_no_persistence(path: Path) -> None:
+    # A collector that could write would make transaction ownership a fiction
+    # (ADR-0016). httpx is expected here; SQLAlchemy is not.
+    offenders = {
+        name
+        for name in imported_names(path)
+        for prefix in ("sqlalchemy", "alembic", "psycopg", "job_radar.persistence")
+        if name == prefix or name.startswith(f"{prefix}.")
+    }
+
+    assert not offenders, f"{path.name} imports {sorted(offenders)}"
