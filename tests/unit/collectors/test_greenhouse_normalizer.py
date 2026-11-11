@@ -637,6 +637,128 @@ def test_a_nul_in_one_posting_does_not_affect_the_next() -> None:
     assert normalize(posting_with(title="Engineer")).title == "Engineer"
 
 
+# --- unpaired surrogates (SPEC, "Text PostgreSQL cannot store") --------------
+
+
+def decoded(json_fields: str) -> dict[str, object]:
+    """The fixture posting with fields decoded from JSON text, as the collector
+    receives them: a lone `\\ud800` escape decodes to an unpaired surrogate."""
+    fields = json.loads(json_fields)
+    assert isinstance(fields, dict)
+    return posting_with(**fields)
+
+
+@pytest.mark.parametrize(
+    ("json_fields", "reason"),
+    [
+        (
+            r'{"title": "Engineer\ud800"}',
+            "title: surrogate_character (got str); "
+            "raw_data: surrogate_character (got dict)",
+        ),
+        (
+            r'{"title": "Engineer\udc00"}',
+            "title: surrogate_character (got str); "
+            "raw_data: surrogate_character (got dict)",
+        ),
+        (
+            r'{"content": "&lt;p&gt;\ud800&lt;/p&gt;"}',
+            "description: surrogate_character (got str); "
+            "raw_data: surrogate_character (got dict)",
+        ),
+        (
+            r'{"location": {"name": "Remote\udfff"}}',
+            "location: surrogate_character (got str); "
+            "raw_data: surrogate_character (got dict)",
+        ),
+        (
+            r'{"departments": [{"name": "Eng\udbff"}]}',
+            "department: surrogate_character (got str); "
+            "raw_data: surrogate_character (got dict)",
+        ),
+        (
+            r'{"metadata": [{"value": "x\ud800"}]}',
+            "raw_data: surrogate_character (got dict)",
+        ),
+        (
+            r'{"offices": [{"name": "HQ", "k\udc00": 1}]}',
+            "raw_data: surrogate_character (got dict)",
+        ),
+        (
+            r'{"title": "\ude00\ud83d"}',
+            "title: surrogate_character (got str); "
+            "raw_data: surrogate_character (got dict)",
+        ),
+    ],
+    ids=[
+        "title-high",
+        "title-low",
+        "content",
+        "location",
+        "department",
+        "unmapped",
+        "nested-key",
+        "reversed-pair",
+    ],
+)
+def test_a_posting_containing_an_unpaired_surrogate_is_invalid(
+    json_fields: str, reason: str
+) -> None:
+    error = rejection(decoded(json_fields))
+
+    assert error.source_job_id == "8653419002"
+    assert error.reason == reason
+    assert error.__cause__ is None
+    assert error.__context__ is None
+
+
+def test_a_surrogate_rejection_quotes_no_source_text() -> None:
+    error = rejection(decoded(r'{"title": "secret-\ud800-title"}'))
+
+    assert "secret" not in str(error)
+    # The message itself is loggable and storable as UTF-8.
+    str(error).encode("utf-8")
+    error.reason.encode("utf-8")
+
+
+def test_a_surrogate_rejection_does_not_alter_the_posting() -> None:
+    posting = decoded(r'{"content": "a\ud800b"}')
+    snapshot = copy.deepcopy(posting)
+
+    rejection(posting)
+
+    assert posting == snapshot
+
+
+def test_a_surrogate_in_one_posting_does_not_affect_the_next() -> None:
+    rejection(decoded(r'{"title": "x\ud800"}'))
+
+    assert normalize(posting_with(title="Engineer")).title == "Engineer"
+
+
+def test_a_valid_escaped_surrogate_pair_is_kept() -> None:
+    # The pair decodes to one non-BMP code point, U+1F680.
+    job = normalize(
+        decoded(
+            r'{"title": "Engineer 🚀", '
+            r'"content": "&lt;p&gt;🚀&lt;/p&gt;", '
+            r'"metadata": [{"value": "🚀"}]}'
+        )
+    )
+
+    assert job.title == "Engineer \U0001f680"
+    assert job.description == "<p>\U0001f680</p>"
+    assert job.raw_data["metadata"] == [{"value": "\U0001f680"}]
+
+
+def test_nul_takes_precedence_over_a_surrogate_in_a_posting() -> None:
+    error = rejection(decoded(r'{"title": "a\u0000b", "metadata": ["\ud800"]}'))
+
+    assert error.reason == (
+        "title: nul_character (got str); raw_data: nul_character (got dict)"
+    )
+
+
 # --- caller errors are not invalid postings ----------------------------------
 
 

@@ -25,6 +25,54 @@ harness milestones.
 
 ---
 
+## 4D-5: Lone-surrogate Unicode validation
+
+- **Status:** complete, 2026-11-11.
+- **Objective:** a posting with an unpaired UTF-16 surrogate becomes one
+  `invalid` posting, as a posting with NUL already does, instead of an error
+  outside the domain contract.
+- **Root cause:** a lone `\uD800`–`\uDFFF` JSON escape decodes to a surrogate
+  code point, which has no UTF-8 encoding. psycopg's text dumper raises
+  `UnicodeEncodeError` (verified without a database). That is not a
+  `psycopg.Error`, so SQLAlchemy does not wrap it, the store adapter does not
+  translate it to `PersistenceError`, and the service propagates it as a
+  programming error (inferred from source; the pre-fix behavior was not
+  executed against PostgreSQL). Before 4D-5 (`90097a2`) the four required
+  text fields were already rejected, but only as pydantic-core's
+  `string_unicode`, a side effect of `strip_whitespace`. Optional text fields
+  and `raw_data` were not checked.
+- **Implementation:** `src/job_radar/domain/job.py` extends the NUL check to
+  surrogates, with category `surrogate_character`, in every text field and in
+  any key or value of `raw_data`. Required text is checked before pydantic's
+  string constraints (the validator follows `StringConstraints`, or the
+  constraints are dropped), so it reports `surrogate_character` rather than
+  `string_unicode`. NUL takes precedence when both occur. SPEC, "Text
+  PostgreSQL cannot store", records the contract (approved 2026-11-11).
+- **Tests:** 55 unit tests (`tests/unit/domain/test_normalized_job.py`,
+  `tests/unit/collectors/test_greenhouse_normalizer.py`) and 2 pipeline
+  integration tests (`tests/integration/test_ingestion_pipeline.py`): a
+  surrogate in an optional text field, and one only in nested `raw_data`, each
+  followed by a valid posting. The integration tests serve ASCII JSON
+  containing the `\ud800` escape, as the API would; httpx's `json=` encodes as
+  UTF-8 and cannot carry an unpaired surrogate. Run against `90097a2`'s
+  `src/`, 50 of the new unit tests failed, so they detect the defect.
+- **Decisions:** reject, never replace (as for NUL). Any surrogate left in a
+  decoded `str` is unpaired, because a valid pair decodes to one non-BMP code
+  point.
+- **Verification (captured, 4D-5 session; output in a session scratchpad,
+  not preserved):**
+  - Ruff lint, Ruff format, mypy: PASS.
+  - Unit: `make test-unit`, exit 0, `538 passed, 211 deselected`.
+  - Integration: `make test-integration`, exit 0, `211 passed, 538
+    deselected`, run once on explicit authorization after the verify-change
+    safety checks (local `postgresql+psycopg`, test databases
+    `jobradar_schema_test` and `jobradar_migration_test`).
+  - DOC-IMPACT: PASS. Overall: PASS.
+  - Only documentation changed after these runs; code and tests are
+    identical to the commit.
+- **Commit:** `git log --format=%h -F --grep='fix(domain): reject lone Unicode surrogates'`.
+- **Follow-up:** none required. H-005 is next.
+
 ## H-004b: Project Traceability & Context Handoff
 
 - **Status:** complete, 2026-11-11.

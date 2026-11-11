@@ -10,6 +10,8 @@ Each test runs inside one transaction that is rolled back
 (``pipeline_connection``); the service's transactions are SAVEPOINTs within it.
 """
 
+import json
+import logging
 from datetime import UTC, datetime, timedelta
 
 import httpx
@@ -17,6 +19,7 @@ import pytest
 from sqlalchemy import Connection, text
 
 from job_radar.config.boards import BoardsConfig
+from job_radar.ingestion.service import LOGGER_NAME
 from job_radar.ingestion.summary import CrawlRunSummary
 from tests.support.clock import FixedClock
 from tests.support.ingestion_fakes import boards
@@ -252,6 +255,89 @@ def test_text_postgresql_cannot_store_makes_a_posting_invalid_not_the_company(
     result = results_of(pipeline.connection, summary.run_id)["alpha"]
     assert result["status"] == "success"
     assert counters(result) == (6, 2, 0, 0, 4)
+
+
+SURROGATE = "\ud800"  # unpaired: a JSON `\ud800` escape without its partner
+ROCKET = "\U0001f680"  # non-BMP; on the wire, the escaped pair 🚀
+
+
+def as_wire_json(envelope: dict[str, object]) -> httpx.Response:
+    """The envelope as the Board API would send it: ASCII JSON with escapes.
+
+    ``httpx.Response(json=...)`` encodes as UTF-8, which cannot carry an
+    unpaired surrogate and would fail inside this fake instead of exercising
+    the collector. Real JSON can only carry one as a ``\\uD800`` escape.
+    """
+    body = json.dumps(envelope).encode("ascii")
+    assert b"\\ud800" in body  # the scenario under test reaches the wire
+    return httpx.Response(
+        200, content=body, headers={"Content-Type": "application/json"}
+    )
+
+
+def rejections(caplog: pytest.LogCaptureFixture) -> dict[str, str]:
+    """Logged normalization rejections: source_job_id -> sanitized reason."""
+    return {
+        str(getattr(record, "source_job_id", None)): str(getattr(record, "error", ""))
+        for record in caplog.records
+        if getattr(record, "operation", None) == "normalize"
+    }
+
+
+def test_an_unpaired_surrogate_in_a_text_field_makes_only_that_posting_invalid(
+    pipeline: Pipeline, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Before 4D-5 an optional text field accepted it. psycopg's text dumper
+    # raises UnicodeEncodeError for it, which is not a database error, so it
+    # would have escaped the service instead of failing one posting (SPEC,
+    # "Text PostgreSQL cannot store").
+    caplog.set_level(logging.WARNING, logger=LOGGER_NAME)
+    invalid = posting(461, location={"name": f"Remote{SURROGATE}"})
+    valid = posting(462, title=f"Engineer {ROCKET}")
+    pipeline.greenhouse.serve("alpha", as_wire_json(board(invalid, valid)))
+
+    summary = pipeline.run(boards(("alpha", "Alpha")))
+
+    rows = jobs_of(pipeline.connection, "alpha")
+    assert set(rows) == {"462"}
+    assert rows["462"]["title"] == f"Engineer {ROCKET}"
+    assert rows["462"]["raw_data"] == valid
+    assert run_row(pipeline.connection, summary.run_id)["status"] == "success"
+    result = results_of(pipeline.connection, summary.run_id)["alpha"]
+    assert result["status"] == "success"
+    assert counters(result) == (2, 1, 0, 0, 1)
+    assert rejections(caplog) == {
+        "461": "location: surrogate_character (got str); "
+        "raw_data: surrogate_character (got dict)"
+    }
+    assert SURROGATE not in caplog.text
+
+
+def test_an_unpaired_surrogate_only_in_nested_raw_data_makes_only_that_posting_invalid(
+    pipeline: Pipeline, caplog: pytest.LogCaptureFixture
+) -> None:
+    # An unmapped field never reaches a text column; without the check it
+    # would reach `jsonb` as a `\ud800` escape.
+    caplog.set_level(logging.WARNING, logger=LOGGER_NAME)
+    pipeline.greenhouse.serve(
+        "alpha",
+        as_wire_json(
+            board(
+                posting(471, metadata=[{"name": "Team", "value": f"x{SURROGATE}"}]),
+                posting(472),
+            )
+        ),
+    )
+
+    summary = pipeline.run(boards(("alpha", "Alpha")))
+
+    assert set(jobs_of(pipeline.connection, "alpha")) == {"472"}
+    assert run_row(pipeline.connection, summary.run_id)["status"] == "success"
+    result = results_of(pipeline.connection, summary.run_id)["alpha"]
+    assert result["status"] == "success"
+    assert counters(result) == (2, 1, 0, 0, 1)
+    assert rejections(caplog) == {"471": "raw_data: surrogate_character (got dict)"}
+    assert SURROGATE not in caplog.text
 
 
 def test_a_board_of_only_invalid_postings_still_succeeds(pipeline: Pipeline) -> None:

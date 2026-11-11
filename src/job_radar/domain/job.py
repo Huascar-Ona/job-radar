@@ -10,6 +10,7 @@ Job Radar has seen this job before. It carries ``observed_at``, and persistence
 derives both stored columns from it.
 """
 
+import re
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -52,45 +53,82 @@ def _blank_to_none(value: object) -> object:
     return value
 
 
-#: PostgreSQL cannot store U+0000: not in `text`, and not as `\u0000` in
-#: `jsonb`. A value carrying one would fail the whole company's transaction,
-#: so it is rejected here, where it makes one posting invalid instead. The
-#: value is rejected, never stripped: altering source data would be inventing
-#: it (SPEC, "Text PostgreSQL cannot store").
+#: Text PostgreSQL cannot store (SPEC, "Text PostgreSQL cannot store"). A
+#: value carrying either would fail at persistence, so it is rejected here,
+#: where it makes one posting invalid instead. The value is rejected, never
+#: stripped or replaced: altering source data would be inventing it.
+#:
+#: U+0000 cannot be stored: not in `text`, and not as `\u0000` in `jsonb`.
 _NUL = "\x00"
+
+#: A surrogate code point (U+D800 to U+DFFF) is not a character and has no
+#: UTF-8 encoding. A JSON `\ud800` escape without its pair decodes to one, and
+#: psycopg then raises UnicodeEncodeError, which is not a database error, so
+#: the ingestion service would treat it as a programming error and let it
+#: propagate rather than fail one company. A valid escaped pair decodes to a
+#: single non-BMP code point, so any surrogate left in a `str` is unpaired.
+_SURROGATE = re.compile("[\ud800-\udfff]")
 
 
 def _nul_error() -> PydanticCustomError:
     return PydanticCustomError("nul_character", "text contains a NUL character")
 
 
-def _reject_nul(value: str) -> str:
+def _surrogate_error() -> PydanticCustomError:
+    return PydanticCustomError(
+        "surrogate_character", "text contains an unpaired surrogate code point"
+    )
+
+
+def _reject_unstorable(value: str) -> str:
+    # NUL is checked first, so a value with both reports `nul_character`.
     if _NUL in value:
         raise _nul_error()
+    if _SURROGATE.search(value):
+        raise _surrogate_error()
     return value
 
 
-def _reject_optional_nul(value: str | None) -> str | None:
-    return None if value is None else _reject_nul(value)
+def _reject_unstorable_input(value: object) -> object:
+    """Check text before pydantic's own string handling sees it.
 
-
-def _reject_nul_in_payload(payload: Mapping[str, object]) -> Mapping[str, object]:
-    """Reject a NUL in any key or string value, however deeply nested.
-
-    Iterative rather than recursive, so a deeply nested payload cannot exhaust
-    the interpreter stack here.
+    ``StringConstraints`` cannot process a surrogate and would report its own
+    ``string_unicode`` error instead of ``surrogate_character``. Stripping
+    never removes a NUL, so checking before it changes nothing for NUL.
+    Anything that is not text is left for the type check to reject.
     """
+    return _reject_unstorable(value) if isinstance(value, str) else value
+
+
+def _reject_optional_unstorable(value: str | None) -> str | None:
+    return None if value is None else _reject_unstorable(value)
+
+
+def _reject_unstorable_in_payload(
+    payload: Mapping[str, object],
+) -> Mapping[str, object]:
+    """Reject unstorable text in any key or string value, however deeply nested.
+
+    A NUL anywhere takes precedence over a surrogate anywhere, so the category
+    does not depend on traversal order. Iterative rather than recursive, so a
+    deeply nested payload cannot exhaust the interpreter stack here.
+    """
+    surrogate_seen = False
     pending: list[object] = [payload]
     while pending:
         value = pending.pop()
         if isinstance(value, str):
             if _NUL in value:
                 raise _nul_error()
+            if not surrogate_seen and _SURROGATE.search(value):
+                surrogate_seen = True
         elif isinstance(value, Mapping):
             pending.extend(value.keys())
             pending.extend(value.values())
         elif isinstance(value, list | tuple):
             pending.extend(value)
+    if surrogate_seen:
+        raise _surrogate_error()
     return payload
 
 
@@ -98,17 +136,24 @@ def _reject_nul_in_payload(payload: Mapping[str, object]) -> Mapping[str, object
 # UTC; the AfterValidator then normalizes the offset away (ADR-0003).
 UtcDatetime = Annotated[AwareDatetime, AfterValidator(_to_utc)]
 
+# Order matters: metadata applies left to right, so the BeforeValidator wraps
+# the constrained string and runs first. Listed before the constraints, it
+# would silently drop them.
 RequiredText = Annotated[
     str,
     StringConstraints(strip_whitespace=True, min_length=1),
-    AfterValidator(_reject_nul),
+    BeforeValidator(_reject_unstorable_input),
 ]
 # _blank_to_none already strips, so no StringConstraints here: they cannot be
 # applied to an optional type.
 OptionalText = Annotated[
-    str | None, BeforeValidator(_blank_to_none), AfterValidator(_reject_optional_nul)
+    str | None,
+    BeforeValidator(_blank_to_none),
+    AfterValidator(_reject_optional_unstorable),
 ]
-SourcePayload = Annotated[Mapping[str, object], AfterValidator(_reject_nul_in_payload)]
+SourcePayload = Annotated[
+    Mapping[str, object], AfterValidator(_reject_unstorable_in_payload)
+]
 
 
 class NormalizedJob(BaseModel):

@@ -273,9 +273,120 @@ def test_text_without_nul_is_kept_exactly() -> None:
     assert job.raw_data == payload
 
 
+#: Range ends and the first low surrogate. Any surrogate left in a `str` is
+#: unpaired: a valid pair is one non-BMP code point.
+SURROGATES = ["\ud800", "\udbff", "\udc00", "\udfff"]
+
+
+def surrogate_error_fields(error: ValidationError) -> set[str]:
+    return {
+        ".".join(str(part) for part in e["loc"])
+        for e in error.errors()
+        if e["type"] == "surrogate_character"
+    }
+
+
+@pytest.mark.parametrize("surrogate", SURROGATES, ids=lambda s: f"U+{ord(s):04X}")
+@pytest.mark.parametrize(
+    "field",
+    [
+        "source_job_id",
+        "company",
+        "title",
+        "job_url",
+        "location",
+        "department",
+        "description",
+        "apply_url",
+    ],
+)
+def test_text_containing_a_surrogate_is_rejected(field: str, surrogate: str) -> None:
+    with pytest.raises(ValidationError) as caught:
+        build(**{field: f"before{surrogate}after"})
+
+    assert surrogate_error_fields(caught.value) == {field}
+
+
+def test_a_reversed_surrogate_pair_is_rejected() -> None:
+    # Low then high is not a pair: two unpaired code points.
+    with pytest.raises(ValidationError) as caught:
+        build(title="\ude00\ud83d")
+
+    assert surrogate_error_fields(caught.value) == {"title"}
+
+
+@pytest.mark.parametrize(
+    "raw_data",
+    [
+        {"content": "x\ud800y"},
+        {"departments": [{"name": "Eng\udc00"}]},
+        {"metadata": [[{"deep": ["\udfff"]}]]},
+        {"key\ud800": "value"},
+        {"nested": {"key\udc00": 1}},
+    ],
+    ids=["value", "nested-list", "deeply-nested", "key", "nested-key"],
+)
+def test_raw_data_containing_a_surrogate_anywhere_is_rejected(
+    raw_data: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError) as caught:
+        build(raw_data=raw_data)
+
+    assert surrogate_error_fields(caught.value) == {"raw_data"}
+
+
+def test_a_surrogate_is_rejected_not_stripped() -> None:
+    with pytest.raises(ValidationError):
+        build(title="\ud800")
+    with pytest.raises(ValidationError):
+        build(location="  \udc00  ")
+
+
+def test_nul_takes_precedence_over_a_surrogate() -> None:
+    with pytest.raises(ValidationError) as in_text:
+        build(title=f"\ud800{NUL}")
+    assert nul_error_fields(in_text.value) == {"title"}
+    assert surrogate_error_fields(in_text.value) == set()
+
+    # In a payload, regardless of which one the traversal reaches first.
+    for raw_data in (
+        {"a": "\ud800", "b": f"{NUL}"},
+        {"a": f"{NUL}", "b": "\ud800"},
+        {"a": [{"deep": "\udc00"}], "b": [f"{NUL}"]},
+    ):
+        with pytest.raises(ValidationError) as in_payload:
+            build(raw_data=raw_data)
+        assert nul_error_fields(in_payload.value) == {"raw_data"}
+        assert surrogate_error_fields(in_payload.value) == set()
+
+
+def test_valid_unicode_outside_the_surrogate_range_is_kept_exactly() -> None:
+    # Non-BMP characters, the code points either side of the surrogate block,
+    # the highest code point and the replacement character.
+    text = "\U0001f600 \U00020000 ퟿  \U0010ffff � café"
+    payload = {"content": text, "emoji\U0001f680": ["\U0001f1f2\U0001f1fd"]}
+
+    job = build(title=text, description=text, raw_data=payload)
+
+    assert job.title == text
+    assert job.description == text
+    assert job.raw_data == payload
+
+
 def test_a_very_deeply_nested_payload_does_not_exhaust_the_stack() -> None:
     payload: dict[str, object] = {"leaf": "ok"}
     for _ in range(5_000):
         payload = {"n": payload}
 
     assert build(raw_data=payload).raw_data is not None
+
+
+def test_a_surrogate_at_the_bottom_of_a_very_deep_payload_is_rejected() -> None:
+    payload: dict[str, object] = {"leaf": "\ud800"}
+    for _ in range(5_000):
+        payload = {"n": payload}
+
+    with pytest.raises(ValidationError) as caught:
+        build(raw_data=payload)
+
+    assert surrogate_error_fields(caught.value) == {"raw_data"}

@@ -100,6 +100,17 @@ The value is rejected, never stripped or replaced: storing anything other
 than what the source sent would be inventing data. Without this rule a single
 such posting would fail its company's whole transaction.
 
+Approved 2026-11-11 (Step 4D-5). The same applies to an
+unpaired UTF-16 surrogate: a code point from U+D800 to U+DFFF in a decoded
+string. One arises when the source's JSON contains a `\uD800`–`\uDFFF` escape
+without its partner. It has no UTF-8 encoding, so in a text column the
+driver cannot send it and fails with an encoding error, not a database error.
+It is rejected in the same fields and the same places in `raw_data`, with the
+category `surrogate_character`. A correctly paired escape decodes to one character
+outside the Basic Multilingual Plane, such as an emoji, and is accepted
+unchanged. When one field or `raw_data` contains both a NUL and a surrogate,
+the category is `nul_character`.
+
 `department` was added to the model so that downstream role filtering has a
 first-class column to reason about instead of parsing `raw_data`.
 
