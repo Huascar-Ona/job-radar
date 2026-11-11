@@ -4,7 +4,7 @@ Entry point for recovering where Job Radar stands. A snapshot, not a source
 of truth: confirm every claim against Git and the code before acting on it.
 History is in [`DEVELOPMENT-LOG.md`](DEVELOPMENT-LOG.md).
 
-**Last updated:** 2026-11-11, in the 4D-5 commit. This file
+**Last updated:** 2026-11-11, in the H-005 commit. This file
 describes the tree of the commit that last changed it
 (`git log -1 --format='%h %ad' --date=short -- docs/PROJECT-STATE.md`). Later
 commits are not reflected; read them. Uncommitted changes to this file
@@ -12,9 +12,9 @@ describe the working tree, not HEAD.
 
 ## Current milestone
 
-**None in progress.** Last completed: **4D-5**, Lone-surrogate Unicode
-validation. Next planned: **H-005**, Context Retrieval Efficiency, which needs
-approval to start; then **4E**.
+**None in progress.** Last completed: **H-005**, Context Retrieval
+Efficiency. Next planned: **4E**, Ingestion CLI, which needs approval to
+start. Its scope is below.
 
 ## Roadmap
 
@@ -22,16 +22,40 @@ approval to start; then **4E**.
 |---|---|---|
 | 1 | H-004b, Project Traceability & Context Handoff | complete |
 | 2 | 4D-5, Lone-surrogate Unicode validation | complete |
-| 3 | H-005, Context Retrieval Efficiency | planned (next) |
-| 4 | 4E, Ingestion CLI | planned |
+| 3 | H-005, Context Retrieval Efficiency | complete |
+| 4 | 4E, Ingestion CLI | planned (next) |
 
 Each step starts only with explicit approval. The order was agreed with the
 maintainer on 2026-11-11; it is not recorded anywhere else in the repository.
+
+### Scope of open milestones
+
+**4E, Ingestion CLI.**
+- Objective: make the existing ingestion service executable from the
+  `job-radar` entry point (`pyproject.toml`, `src/job_radar/cli.py`),
+  following the existing contracts:
+  - the CLI owns the process-level engine and session lifecycle (ARCHITECTURE,
+    "Transaction ownership");
+  - a run follows SPEC "Ingestion run" with configuration from SPEC
+    "Configuration" (ADR-0012);
+  - exit code 0 for `success`, `partial_success` and `failed` alike; only an
+    unhandled crash is non-zero (SPEC, "Run reporting"; ADR-0008);
+  - acceptance tests drive the CLI end to end with stubbed HTTP and a real
+    database (ADR-0010; ARCHITECTURE, "Testing boundaries").
+- Not yet specified anywhere: the command's name, arguments and output.
+  Decide them in 4E; nothing here defines them.
+- Out of scope: refactoring the ingestion service, collectors or persistence
+  beyond what the CLI needs; new sources (Lever, Ashby); a non-zero exit
+  policy for partial failure (a separate decision, SPEC); scheduling, retries
+  and concurrency.
 
 ## Completed milestones
 
 Most recent first. Commits and evidence are in `DEVELOPMENT-LOG.md`.
 
+- **H-005**: context freshness rules, milestone scope in this file, volatile
+  claims removed from docs and checked by DOC-IMPACT
+  (`git log --format=%h -F --grep='feat(harness): improve context freshness and retrieval'`)
 - **4D-5**: unpaired UTF-16 surrogates rejected in the domain model, like NUL.
   (`git log --format=%h -F --grep='fix(domain): reject lone Unicode surrogates'`)
 - **H-004b**: this file, `DEVELOPMENT-LOG.md`, the `project-handoff` skill.
@@ -50,6 +74,7 @@ Most recent first. Commits and evidence are in `DEVELOPMENT-LOG.md`.
 
 | Evidence | What | Provenance |
 |---|---|---|
+| Lint, format, mypy, 538 unit tests: PASS; integration SKIPPED (docs/harness scope); DOC-IMPACT: PASS | H-005 tree, before commit (no application code or tests changed since 4D-5) | Captured by verify-change, 2026-11-11 (DEVELOPMENT-LOG, H-005). The output files were in a session scratchpad and are not preserved |
 | Lint, format, mypy: PASS; 538 unit and 211 integration tests passed; DOC-IMPACT: PASS; overall PASS | 4D-5 tree, before commit (code and tests identical to the commit) | Captured by verify-change, 2026-11-11 (DEVELOPMENT-LOG, 4D-5). The output files were in a session scratchpad and are not preserved |
 | Lint, format, mypy, 483 unit tests: PASS; integration SKIPPED (docs/harness scope) | H-004b tree, before commit | Captured by verify-change, 2026-11-11 (DEVELOPMENT-LOG, H-004b). The output files were in a session scratchpad and are not preserved |
 | 483 unit and 209 integration tests: PASS; lint, format, mypy, DOC-IMPACT: PASS | `62265ac` (4D-4) | Reported by the maintainer; no output is preserved in the repository |
@@ -69,18 +94,21 @@ A count above is not evidence for any later tree: run `verify-change`.
 
 ## Safety and authorization
 
-Standing rules, from `CLAUDE.md` and `.claude/skills/verify-change/`:
+A summary, not the rules. The authoritative text is `CLAUDE.md`
+("Verification", "Current scope") and the verify-change skill (hard rules;
+section 4 for the database target checks and the approval question). Where
+this summary and they differ, they win.
 
-- Integration tests create databases and drop schemas. Ask before **every**
-  run, naming the target. One approval covers one execution, and a run whose
-  result was lost still consumes it.
-- Never start or stop Docker; the maintainer runs `make up`.
-- No PASS without a captured exit code and completion output (H-004).
-- Commit and push only on explicit authorization for that change. Never
-  reset, stash, checkout or pull without being asked.
-- Do not start the next milestone without approval.
-- Out of scope (CLAUDE.md): Lever, Ashby, LLM matching, Telegram alerts, web
-  frontend, authentication, payments.
+- **PostgreSQL integration tests** create databases and drop schemas. Ask
+  before **every** run, naming the target. One approval covers one
+  execution, and a run whose result was lost still consumes it.
+- **Docker:** never start or stop it; the maintainer runs `make up`.
+- **Evidence:** no PASS without a captured exit code and completion output.
+- **Maintainer instructions** (given in milestone prompts, not yet written
+  in `CLAUDE.md`): commit and push only on explicit authorization for that
+  change; never reset, stash, checkout or pull without being asked; do not
+  start a milestone without approval.
+- **Out of scope:** `CLAUDE.md`, "Current scope".
 
 ## Git references
 

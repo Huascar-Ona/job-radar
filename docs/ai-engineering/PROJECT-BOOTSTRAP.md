@@ -159,7 +159,8 @@ later?
 **Artifact.** One file per decision, numbered, immutable once accepted; a
 changed decision is a new ADR that supersedes.
 
-**Job Radar [REPO].** 15 ADRs. The valuable ones record what code cannot show:
+**Job Radar [REPO].** 15 ADRs at Step 3 (`docs/DECISIONS/` has the current
+set). The valuable ones record what code cannot show:
 ADR-0014 records the *undocumented* nature of provider id semantics; ADR-0015
 records that `(xmax = 0)` worked correctly and was removed for a different
 reason.

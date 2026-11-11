@@ -388,6 +388,15 @@ grep -rn -- '<term>' docs README.md CLAUDE.md .claude
    that is in progress and not being committed as complete must not be
    described as complete.
 
+   **Volatile claims.** On the same milestone change, search the documents
+   for claims the milestone may have made false, and read only the matching
+   sections: the completed and the next milestone IDs (for example `4D-5`,
+   `4E`), `next step`, `planned`, `pending`, `in progress`, `so far`,
+   `currently`, and counts stated as current (`tests`, `ADRs`). Such a claim
+   that the change makes false is `contradiction-introduced`; one already
+   false at HEAD is `debt`. A count tied to a named past step ("284 tests at
+   Step 3") is history, not a claim about now.
+
 3. **Verdict per document.** Read the relevant sections, then give exactly one:
 
    | Verdict | Meaning |

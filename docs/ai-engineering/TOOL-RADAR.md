@@ -29,8 +29,8 @@ What exists, what it costs, and what would have to be true before adopting it.
 ## CURRENT
 
 ### Claude Code
-**Category** coding agent · **Evidence** Repository-verified (every step so
-far, 0 through 4D-4, was produced with it)
+**Category** coding agent · **Evidence** Repository-verified (every milestone
+in `docs/DEVELOPMENT-LOG.md` was produced with it)
 
 Terminal-based coding agent: reads files, runs commands, edits code, iterates on
 tool output. Its value in this project came from closing the loop itself — run
@@ -65,7 +65,8 @@ signal the agent can act on unaided.
 **Guidance.** Build this first. Everything else on this radar assumes it exists.
 
 ### ADRs, SPEC.md, ARCHITECTURE.md
-**Category** durable context · **Evidence** Repository-verified (16 ADRs)
+**Category** durable context · **Evidence** Repository-verified
+(`docs/DECISIONS/`)
 
 Decision and specification records. Their agent-specific value is preserving
 reasoning that code cannot carry: rejected alternatives, evidence weighed, and

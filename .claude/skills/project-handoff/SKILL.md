@@ -25,6 +25,10 @@ or plan new work.
    or the conversation, not checked now) or **Assumed** (inference; give the
    reasoning). If unsure, use the weaker label.
 5. **Do not invent.** If something is not recorded, say "not recorded".
+6. **Fresh reads only.** Every Verified claim comes from a command run or a
+   file read during this handoff. The Git status and file contents shown at
+   session start, and anything remembered from earlier in the conversation,
+   are snapshots: never report them as current.
 
 ## 1. Collect
 
@@ -55,8 +59,10 @@ it may be stale: say so rather than claiming what is or is not pushed.
 
 ## 2. Check the snapshot
 
-- If commits since `PROJECT-STATE.md` last changed are not reflected in it,
-  say the snapshot is stale and list those commits. Do not update the file.
+- List the commits after the snapshot with
+  `git log --oneline <sha>..HEAD`, where `<sha>` is the last command's
+  output. If any are listed, the snapshot is stale: say so, list them, and
+  compare them with the snapshot's milestone status. Do not update the file.
 - If the last `git log` command prints nothing, or `git status` lists
   `PROJECT-STATE.md`, its content is uncommitted. Say so. It describes the
   working tree, which may be ahead of HEAD; for example, a milestone that is
@@ -67,7 +73,9 @@ it may be stale: say so rather than claiming what is or is not pushed.
 - If the working tree is dirty, list the paths and say which milestone they
   appear to belong to, labelled Assumed.
 - If PROJECT-STATE, DEVELOPMENT-LOG and Git disagree, report the conflict.
-  Git wins for what was committed and when.
+  Git wins for what was committed and when. A disagreement Git cannot
+  settle, such as a milestone's status, goes under section 5 as unresolved;
+  do not pick an answer.
 
 ## 3. Authorizations
 

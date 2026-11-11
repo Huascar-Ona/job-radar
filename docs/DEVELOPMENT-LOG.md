@@ -25,6 +25,58 @@ harness milestones.
 
 ---
 
+## H-005: Context Retrieval Efficiency
+
+- **Status:** complete, 2026-11-11.
+- **Objective:** measure and improve how an agent recovers context:
+  retrieval cost, freshness, handoff accuracy. Out of scope: application
+  features, retrieval infrastructure (vector search, RAG, MCP, indexes),
+  hooks and scripts.
+- **Phase 1, audit (at `423751b`):**
+  - Observed: `CLAUDE.md` and Git status injected at session start went
+    stale during a long session; skill listings were refreshed.
+  - Observed: five representative questions each needed three or fewer
+    search or read operations. No retrieval failure, so no infrastructure is
+    justified.
+  - Observed: volatile claims had drifted (TOOL-RADAR "0 through 4D-4",
+    CONCEPTS "284 tests" and "ADRs (15)"). 4D-5's DOC-IMPACT missed the
+    first: its review map does not lead from domain code to TOOL-RADAR.
+  - Observed: no planned milestone had a recorded scope.
+- **Phase 2 and final refinements:**
+  - Volatile counts replaced with references or dated "at Step 3"
+    (TOOL-RADAR, CONCEPTS, PROJECT-BOOTSTRAP).
+  - PROJECT-STATE: objective and out-of-scope for each open milestone. 4E's
+    is derived from SPEC, ARCHITECTURE, ADR-0008, ADR-0010 and ADR-0012; the
+    command's name and arguments are left undecided.
+  - PROJECT-STATE's safety section is a summary pointing to `CLAUDE.md` and
+    verify-change as authoritative, with no requirement removed.
+  - Freshness rules in `CLAUDE.md` and project-handoff: current HEAD, status
+    and files from disk; session-start snapshots are not authoritative;
+    staleness checked with `git log <snapshot>..HEAD`; unresolved
+    disagreements reported, not settled.
+  - verify-change DOC-IMPACT: on a milestone change, search for volatile
+    claims (milestone IDs, planned or pending status, current counts) and
+    read only the matching sections.
+- **Measurements (bytes of command output, not tokens; the operation counts
+  are the minimum paths, taken by an agent that already knew the code):**
+  - Questions 1–4 unchanged: 434 B, ~9.1 KB, 154 B, ~8.0 KB.
+  - Question 5 (next milestone and its scope): 818 B and partial before;
+    2,304 B and complete after.
+  - Handoff collection: 15,145 B before; 16,796 B after.
+  - `CLAUDE.md`, loaded every session: 3,097 B before; 3,426 B after.
+- **Decisions:** no code map, hooks, scripts or indexes. Splitting
+  verify-change's database section (5,067 of 23,303 B, 22%) into an
+  on-demand file was deferred: the saving is about 5 KB on runs without
+  integration, no context pressure was observed, and a split would move
+  safety steps out of the main file.
+- **Verification (captured, H-005 session; output in a session scratchpad,
+  not preserved):** Ruff lint, Ruff format, mypy: PASS. Unit: `make
+  test-unit`, exit 0, `538 passed, 211 deselected`. Integration: SKIPPED
+  (docs/harness scope). DOC-IMPACT: PASS. Not validated in a fresh session.
+- **Commit:** `git log --format=%h -F --grep='feat(harness): improve context freshness and retrieval'`.
+- **Follow-up:** a fresh-session check of the freshness rules (`/context`,
+  `/project-handoff`), run by the maintainer.
+
 ## 4D-5: Lone-surrogate Unicode validation
 
 - **Status:** complete, 2026-11-11.

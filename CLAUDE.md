@@ -24,6 +24,12 @@ Do not silently change either.
 
 ## Recovering context
 
+Start from the repository as it is now: run `git rev-parse HEAD` and
+`git status`, and read files from disk. Git status and file contents shown at
+session start are snapshots that go stale once the repository changes. If
+`docs/PROJECT-STATE.md` disagrees with newer commits, report the discrepancy;
+do not guess which is right.
+
 Read only what the task needs:
 
 - Project status, or planning a milestone: `docs/PROJECT-STATE.md`.

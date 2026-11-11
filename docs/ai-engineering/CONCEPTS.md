@@ -182,14 +182,14 @@ ways.
 | **Alembic** | Schema is versioned and reversible; `alembic check` proves models and migrations agree | [REPO: `test_migrations.py`] |
 | **psycopg 3** | Returns timezone-aware datetimes; exposes real `IntegrityError` | [REPO] |
 | **PostgreSQL** | **The strongest verifier in the stack.** Constraints hold regardless of which code path writes | [REPO: ADR-0010] |
-| **pytest** | Executable invariants; parametrization makes exhaustive cases cheap | [REPO: 284 tests] |
+| **pytest** | Executable invariants; parametrization makes exhaustive cases cheap | [REPO: 284 tests at Step 3; current baseline in `docs/PROJECT-STATE.md`] |
 | **mypy strict** | Catches whole error classes before runtime; forces honesty about `None` | [REPO] |
 | **Ruff** | Style and a broad correctness rule set (`S`, `B`, `DTZ`, `PT`, `ARG`) | [REPO: `pyproject.toml`] |
 | **Docker Compose** | Real PostgreSQL on every machine; no SQLite substitution | [REPO] |
 | **Git** | Version control. When this table was written the repository had no commits, a real gap in the harness; it now has a commit history (`git log`) | [REPO] |
 | **SPEC.md** | Defines expected behavior; the reference during implementation | [REPO] |
 | **ARCHITECTURE.md** | Defines boundaries and transaction ownership | [REPO] |
-| **ADRs (15)** | Preserve *why*. Without them, a later agent re-litigates settled decisions | [REPO] |
+| **ADRs** | Preserve *why*. Without them, a later agent re-litigates settled decisions | [REPO: `docs/DECISIONS/`; 15 at Step 3] |
 
 The ADRs deserve emphasis. An agent reading only code sees the decision but not
 the alternatives rejected or the evidence weighed. ADR-0014 records that
