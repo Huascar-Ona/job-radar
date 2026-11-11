@@ -147,3 +147,124 @@ def test_collectors_import_no_persistence(path: Path) -> None:
     }
 
     assert not offenders, f"{path.name} imports {sorted(offenders)}"
+
+
+# --- Greenhouse schemas stay inside the Greenhouse package ------------------
+
+import job_radar  # noqa: E402
+
+SOURCE_ROOT = Path(job_radar.__file__).parent
+GREENHOUSE_ROOT = COLLECTORS_ROOT / "greenhouse"
+GREENHOUSE_SCHEMA = "job_radar.collectors.greenhouse.schema"
+
+
+def imported_modules_and_members(path: Path) -> set[str]:
+    """Like imported_names, plus ``module.member`` for each from-import.
+
+    ``from job_radar.collectors.greenhouse import schema`` names the module
+    only as a member, which imported_names alone would miss.
+    """
+    names = imported_names(path)
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+            names.update(f"{node.module}.{alias.name}" for alias in node.names)
+    return names
+
+
+def modules_outside_greenhouse() -> list[Path]:
+    return sorted(
+        path
+        for path in SOURCE_ROOT.rglob("*.py")
+        if GREENHOUSE_ROOT not in path.parents
+    )
+
+
+def test_greenhouse_schema_module_exists() -> None:
+    # Guards the guard: a renamed schema module would make the check vacuous.
+    assert (GREENHOUSE_ROOT / "schema.py").is_file()
+    assert modules_outside_greenhouse()
+
+
+@pytest.mark.parametrize(
+    "path",
+    modules_outside_greenhouse(),
+    ids=lambda p: str(p.relative_to(SOURCE_ROOT)),
+)
+def test_greenhouse_schema_is_imported_only_inside_its_package(path: Path) -> None:
+    # ARCHITECTURE: Greenhouse Pydantic schemas are imported by nothing
+    # outside the Greenhouse package.
+    offenders = {
+        name
+        for name in imported_modules_and_members(path)
+        if name == GREENHOUSE_SCHEMA or name.startswith(f"{GREENHOUSE_SCHEMA}.")
+    }
+
+    assert not offenders, f"{path.name} imports {sorted(offenders)}"
+
+
+# --- the normalizer is pure translation -------------------------------------
+
+# The normalizer and the source schema it validates with: together, the whole
+# normalization path. The collector in the same package legitimately uses httpx.
+NORMALIZATION_MODULES = (
+    GREENHOUSE_ROOT / "normalizer.py",
+    GREENHOUSE_ROOT / "schema.py",
+)
+
+# Transport, persistence, filesystem and time: a normalizer needs none of them
+# (ADR-0016). The observation instant is an argument, never read here.
+NORMALIZER_FORBIDDEN_PREFIXES = (
+    "httpx",
+    "requests",
+    "urllib",
+    "http",
+    "socket",
+    "sqlalchemy",
+    "alembic",
+    "psycopg",
+    "job_radar.persistence",
+    "job_radar.domain.clock",
+    "pathlib",
+    "os",
+    "io",
+    "shutil",
+    "tempfile",
+    "time",
+)
+
+NORMALIZER_FORBIDDEN_CALLS = frozenset({"open", "now", "utcnow", "today"})
+
+
+@pytest.mark.parametrize("path", NORMALIZATION_MODULES, ids=lambda p: p.name)
+def test_normalization_module_exists(path: Path) -> None:
+    # Guards the guard: a renamed module would make the checks below vacuous.
+    assert path.is_file()
+
+
+@pytest.mark.parametrize("path", NORMALIZATION_MODULES, ids=lambda p: p.name)
+def test_normalization_imports_no_io_or_clock(path: Path) -> None:
+    # imported_modules_and_members, so that `from job_radar.domain import
+    # clock` is caught as well as `import job_radar.domain.clock`.
+    offenders = {
+        name
+        for name in imported_modules_and_members(path)
+        for prefix in NORMALIZER_FORBIDDEN_PREFIXES
+        if name == prefix or name.startswith(f"{prefix}.")
+    }
+
+    assert not offenders, f"{path.name} imports {sorted(offenders)}"
+
+
+@pytest.mark.parametrize("path", NORMALIZATION_MODULES, ids=lambda p: p.name)
+def test_normalization_calls_no_open_or_clock(path: Path) -> None:
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    called: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name):
+                called.add(node.func.id)
+            elif isinstance(node.func, ast.Attribute):
+                called.add(node.func.attr)
+
+    assert not called & NORMALIZER_FORBIDDEN_CALLS
