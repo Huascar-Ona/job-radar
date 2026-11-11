@@ -375,6 +375,141 @@ def test_envelope_failures_report_the_decode_operation() -> None:
     assert caught.value.operation
 
 
+# --- completeness: meta.total (ADR-0016 addendum) ---------------------------
+
+
+def assert_decode_failure(body: object) -> CollectorError:
+    collector, _ = collector_for(responding(200, json_body=body))
+
+    with pytest.raises(CollectorError) as caught:
+        collector.fetch_jobs(board_token=BOARD)
+
+    error = caught.value
+    assert error.operation == "decode"
+    assert error.source == "greenhouse"
+    assert error.company == BOARD
+    assert error.log_context()["operation"] == "decode"
+    return error
+
+
+def test_matching_total_is_accepted() -> None:
+    other = {**POSTING, "id": 8653419003}
+    body = {"jobs": [POSTING, other], "meta": {"total": 2}}
+    collector, _ = collector_for(responding(200, json_body=body))
+
+    assert list(collector.fetch_jobs(board_token=BOARD)) == [POSTING, other]
+
+
+def test_empty_board_with_total_zero_is_accepted() -> None:
+    body = {"jobs": [], "meta": {"total": 0}}
+    collector, _ = collector_for(responding(200, json_body=body))
+
+    assert list(collector.fetch_jobs(board_token=BOARD)) == []
+
+
+def test_total_greater_than_jobs_is_a_decode_failure() -> None:
+    # The board says it has more than it sent: a truncated response must not
+    # be recorded as a successful crawl.
+    error = assert_decode_failure({"jobs": [POSTING], "meta": {"total": 2}})
+
+    assert "2" in error.message
+    assert "1" in error.message
+
+
+def test_total_smaller_than_jobs_is_a_decode_failure() -> None:
+    error = assert_decode_failure({"jobs": [POSTING, POSTING], "meta": {"total": 1}})
+
+    assert "total" in error.message
+
+
+def test_total_mismatch_on_an_empty_board_is_a_decode_failure() -> None:
+    assert_decode_failure({"jobs": [], "meta": {"total": 3}})
+
+
+@pytest.mark.parametrize(
+    "total",
+    ["1", 1.0, True, False, [1], {"value": 1}],
+    ids=["string", "float", "true", "false", "list", "object"],
+)
+def test_total_that_is_not_a_strict_integer_is_a_decode_failure(
+    total: object,
+) -> None:
+    # 1.0 == 1 and True == 1 in Python; neither is a JSON integer count.
+    error = assert_decode_failure({"jobs": [POSTING], "meta": {"total": total}})
+
+    assert "integer" in error.message
+
+
+def test_float_total_is_rejected_even_when_parsed_from_the_wire() -> None:
+    # Guards against relying on the stub's own serialization: "1.0" on the
+    # wire decodes to a Python float.
+    collector, _ = collector_for(
+        responding(200, text='{"jobs": [{"id": 1}], "meta": {"total": 1.0}}')
+    )
+
+    with pytest.raises(CollectorError) as caught:
+        collector.fetch_jobs(board_token=BOARD)
+
+    assert caught.value.operation == "decode"
+
+
+def test_missing_meta_is_accepted_unverified() -> None:
+    collector, _ = collector_for(responding(200, json_body={"jobs": [POSTING]}))
+
+    assert list(collector.fetch_jobs(board_token=BOARD)) == [POSTING]
+
+
+def test_null_meta_is_accepted_unverified() -> None:
+    body = {"jobs": [POSTING], "meta": None}
+    collector, _ = collector_for(responding(200, json_body=body))
+
+    assert list(collector.fetch_jobs(board_token=BOARD)) == [POSTING]
+
+
+@pytest.mark.parametrize(
+    "meta",
+    [[], [{"total": 1}], "total", 1, True],
+    ids=["empty-list", "list", "string", "number", "boolean"],
+)
+def test_meta_that_is_not_an_object_is_a_decode_failure(meta: object) -> None:
+    error = assert_decode_failure({"jobs": [POSTING], "meta": meta})
+
+    assert "meta" in error.message
+
+
+def test_meta_without_total_is_accepted_unverified() -> None:
+    body = {"jobs": [POSTING], "meta": {"other": "x"}}
+    collector, _ = collector_for(responding(200, json_body=body))
+
+    assert list(collector.fetch_jobs(board_token=BOARD)) == [POSTING]
+
+
+def test_null_total_is_accepted_unverified() -> None:
+    body = {"jobs": [POSTING], "meta": {"total": None}}
+    collector, _ = collector_for(responding(200, json_body=body))
+
+    assert list(collector.fetch_jobs(board_token=BOARD)) == [POSTING]
+
+
+def test_total_counts_malformed_postings_too() -> None:
+    # meta.total is compared with the length of `jobs`, not with the number
+    # of convertible postings: element shape stays the normalizer's concern.
+    body = {"jobs": [POSTING, "not-an-object", None], "meta": {"total": 3}}
+    collector, _ = collector_for(responding(200, json_body=body))
+
+    assert len(collector.fetch_jobs(board_token=BOARD)) == 3
+
+
+@pytest.mark.parametrize(
+    "jobs", [{}, "not-a-list", 42, None], ids=["object", "string", "number", "null"]
+)
+def test_jobs_type_is_checked_before_meta(jobs: object) -> None:
+    # The existing `jobs` failure is unchanged by a valid or invalid meta.
+    error = assert_decode_failure({"jobs": jobs, "meta": {"total": "bad"}})
+
+    assert "jobs" in error.message
+
+
 # --- client construction ----------------------------------------------------
 
 

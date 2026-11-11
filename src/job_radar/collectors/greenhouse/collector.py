@@ -148,7 +148,44 @@ class GreenhouseCollector:
             )
         # Element shape is deliberately not checked: one unconvertible posting
         # must not fail an otherwise good board (ADR-0016).
+        self._check_completeness(board_token, body.get("meta"), len(jobs))
         return jobs
+
+    def _check_completeness(
+        self, board_token: str, meta: object, job_count: int
+    ) -> None:
+        """Enforce ``meta.total`` when Greenhouse reports it (ADR-0016 addendum).
+
+        ``meta.total`` is observed but undocumented, so its absence is
+        tolerated and completeness is then simply unverified. When present it
+        must agree with ``jobs``: a board that disagrees with its own count is
+        a failed crawl, never a silently truncated successful one. No
+        pagination is attempted.
+        """
+        if meta is None:
+            return
+        if not isinstance(meta, dict):
+            raise self._failure(
+                board_token,
+                "decode",
+                f"'meta' is not an object, got {type(meta).__name__}",
+            )
+        total: object = meta.get("total")
+        if total is None:
+            return
+        # bool is an int subclass in Python, but JSON true is not a count.
+        if isinstance(total, bool) or not isinstance(total, int):
+            raise self._failure(
+                board_token,
+                "decode",
+                f"'meta.total' is not an integer, got {type(total).__name__}",
+            )
+        if total != job_count:
+            raise self._failure(
+                board_token,
+                "decode",
+                f"'meta.total' is {total} but 'jobs' has {job_count} entries",
+            )
 
     def _failure(
         self, board_token: str, operation: str, message: str
