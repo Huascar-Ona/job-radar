@@ -51,11 +51,16 @@ During implementation:
 
 Before finishing:
 
-1. Run formatting and linting.
-2. Run tests.
-3. Verify acceptance criteria.
-4. Report what changed.
-5. Report any unresolved issues.
+1. Verify with the `verify-change` skill (`.claude/skills/verify-change/`).
+2. Verify acceptance criteria.
+3. Report what changed, the verification report, and any unresolved issues.
+
+## Verification
+
+Never claim a change is verified without evidence from checks that actually
+ran. Skipped, blocked or omitted checks are unverified, never passing; say so.
+Integration tests need PostgreSQL and create/drop test databases: ask before
+each run.
 
 ## Important invariants
 

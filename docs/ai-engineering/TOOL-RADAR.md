@@ -74,25 +74,47 @@ undocumented across all three sources — unrecoverable from code.
 
 **Cost/risk.** Drift. A stale ADR is worse than none because it is trusted.
 
----
-
-## EVALUATE WHEN NEEDED
-
 ### Skills
-**Category** reusable procedure + context · **Evidence** Vendor-documented ·
-**Job Radar status** not used; no `.claude/` directory exists [REPO]
+**Category** reusable procedure + context · **Evidence** Repository-verified
+(file exists); behavior only partially exercised · **Job Radar status** one
+skill, `verify-change` (H-002)
 
 A packaged procedure with its context, loaded on demand when a task matches.
-Progressive disclosure: unlike `CLAUDE.md`, it costs nothing until invoked.
+Progressive disclosure: only the name and description are loaded every
+session. The body costs nothing until the skill is invoked.
 
 **Trigger.** You have explained the same multi-step procedure across three or
 more sessions.
 
-**Cost/risk.** Skills that overlap or contradict each other; maintenance as the
-procedure drifts from reality.
+**Symptom that justified it.** An orientation audit could only run lint, type
+checks and 169 unit tests. The 184 integration tests were collected but not
+run, because PostgreSQL was down. Nothing in the repository defined how to
+report that, so "unit tests green" could be mistaken for "verified". The
+integration suite also creates databases and drops schemas, which no written
+procedure warned about.
 
-**Why not yet.** No procedure in Steps 0–3 recurred often enough. The workflow
-in `CLAUDE.md` covered it.
+**What it does.**
+- Classifies the diff conservatively.
+- Runs the existing Makefile gates one by one.
+- Refuses integration tests against an unverified database target, and asks
+  before every integration run.
+- Reports PASS/FAIL/BLOCKED/SKIPPED per check and PASS/FAIL/BLOCKED/PARTIAL
+  overall.
+
+It is followed by the agent, not enforced by the harness.
+
+**Cost/risk.** Skills that overlap or contradict each other; maintenance as the
+procedure drifts from reality. `verify-change` hard-codes test database names
+and destructive operations, so it re-reads them from `tests/` on each run
+rather than trusting its own text.
+
+**Not yet verified (radar step 5).** Whether it solved the measured problem
+has not been shown. Its behavior under PostgreSQL-available, failing-test and
+omitted-integration scenarios has not been exercised.
+
+---
+
+## EVALUATE WHEN NEEDED
 
 ### Subagents
 **Category** parallelism / context isolation · **Evidence** Vendor-documented ·
