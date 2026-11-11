@@ -579,6 +579,64 @@ def test_reason_names_every_failing_field() -> None:
     assert "absolute_url" in error.reason
 
 
+# --- NUL characters (SPEC, "Text PostgreSQL cannot store") -----------------
+
+NUL = "\x00"
+
+
+@pytest.mark.parametrize(
+    ("fields", "reason"),
+    [
+        (
+            {"title": f"Engineer{NUL}"},
+            "title: nul_character (got str); raw_data: nul_character (got dict)",
+        ),
+        (
+            {"content": f"&lt;p&gt;{NUL}&lt;/p&gt;"},
+            "description: nul_character (got str); raw_data: nul_character (got dict)",
+        ),
+        (
+            {"location": {"name": f"Remote{NUL}"}},
+            "location: nul_character (got str); raw_data: nul_character (got dict)",
+        ),
+        (
+            {"departments": [{"name": f"Eng{NUL}"}]},
+            "department: nul_character (got str); raw_data: nul_character (got dict)",
+        ),
+        ({"metadata": [{"value": f"x{NUL}"}]}, "raw_data: nul_character (got dict)"),
+        (
+            {"offices": [{"name": "HQ", f"k{NUL}": 1}]},
+            "raw_data: nul_character (got dict)",
+        ),
+    ],
+    ids=["title", "content", "location", "department", "unmapped", "nested-key"],
+)
+def test_a_posting_containing_nul_is_invalid(
+    fields: dict[str, object], reason: str
+) -> None:
+    error = rejection(posting_with(**fields))
+
+    assert error.source_job_id == "8653419002"
+    assert error.reason == reason
+    assert error.__cause__ is None
+    assert error.__context__ is None
+
+
+def test_a_nul_rejection_does_not_alter_the_posting() -> None:
+    posting = posting_with(content=f"a{NUL}b")
+    snapshot = copy.deepcopy(posting)
+
+    rejection(posting)
+
+    assert posting == snapshot
+
+
+def test_a_nul_in_one_posting_does_not_affect_the_next() -> None:
+    rejection(posting_with(title=f"x{NUL}"))
+
+    assert normalize(posting_with(title="Engineer")).title == "Engineer"
+
+
 # --- caller errors are not invalid postings ----------------------------------
 
 

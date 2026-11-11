@@ -24,6 +24,7 @@ from pydantic import (
     Field,
     StringConstraints,
 )
+from pydantic_core import PydanticCustomError
 
 
 class JobSource(StrEnum):
@@ -51,14 +52,63 @@ def _blank_to_none(value: object) -> object:
     return value
 
 
+#: PostgreSQL cannot store U+0000: not in `text`, and not as `\u0000` in
+#: `jsonb`. A value carrying one would fail the whole company's transaction,
+#: so it is rejected here, where it makes one posting invalid instead. The
+#: value is rejected, never stripped: altering source data would be inventing
+#: it (SPEC, "Text PostgreSQL cannot store").
+_NUL = "\x00"
+
+
+def _nul_error() -> PydanticCustomError:
+    return PydanticCustomError("nul_character", "text contains a NUL character")
+
+
+def _reject_nul(value: str) -> str:
+    if _NUL in value:
+        raise _nul_error()
+    return value
+
+
+def _reject_optional_nul(value: str | None) -> str | None:
+    return None if value is None else _reject_nul(value)
+
+
+def _reject_nul_in_payload(payload: Mapping[str, object]) -> Mapping[str, object]:
+    """Reject a NUL in any key or string value, however deeply nested.
+
+    Iterative rather than recursive, so a deeply nested payload cannot exhaust
+    the interpreter stack here.
+    """
+    pending: list[object] = [payload]
+    while pending:
+        value = pending.pop()
+        if isinstance(value, str):
+            if _NUL in value:
+                raise _nul_error()
+        elif isinstance(value, Mapping):
+            pending.extend(value.keys())
+            pending.extend(value.values())
+        elif isinstance(value, list | tuple):
+            pending.extend(value)
+    return payload
+
+
 # Timezone-aware only. AwareDatetime rejects naive input rather than assuming
 # UTC; the AfterValidator then normalizes the offset away (ADR-0003).
 UtcDatetime = Annotated[AwareDatetime, AfterValidator(_to_utc)]
 
-RequiredText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+RequiredText = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1),
+    AfterValidator(_reject_nul),
+]
 # _blank_to_none already strips, so no StringConstraints here: they cannot be
 # applied to an optional type.
-OptionalText = Annotated[str | None, BeforeValidator(_blank_to_none)]
+OptionalText = Annotated[
+    str | None, BeforeValidator(_blank_to_none), AfterValidator(_reject_optional_nul)
+]
+SourcePayload = Annotated[Mapping[str, object], AfterValidator(_reject_nul_in_payload)]
 
 
 class NormalizedJob(BaseModel):
@@ -102,7 +152,7 @@ class NormalizedJob(BaseModel):
         default=True, description="Always true in the MVP (ADR-0004)."
     )
 
-    raw_data: Mapping[str, object] = Field(
+    raw_data: SourcePayload = Field(
         description="The source payload as received (SPEC requirement 9)."
     )
 

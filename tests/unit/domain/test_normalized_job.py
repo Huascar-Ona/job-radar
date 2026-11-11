@@ -201,3 +201,81 @@ def test_unknown_fields_are_rejected() -> None:
 def test_source_must_be_a_known_source() -> None:
     with pytest.raises(ValidationError):
         build(source="monster.com")
+
+
+# --- text PostgreSQL cannot store (SPEC, "Text PostgreSQL cannot store") ----
+
+NUL = "\x00"
+
+
+def nul_error_fields(error: ValidationError) -> set[str]:
+    return {
+        ".".join(str(part) for part in e["loc"])
+        for e in error.errors()
+        if e["type"] == "nul_character"
+    }
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "source_job_id",
+        "company",
+        "title",
+        "job_url",
+        "location",
+        "department",
+        "description",
+        "apply_url",
+    ],
+)
+def test_text_containing_nul_is_rejected(field: str) -> None:
+    with pytest.raises(ValidationError) as caught:
+        build(**{field: f"before{NUL}after"})
+
+    assert nul_error_fields(caught.value) == {field}
+
+
+@pytest.mark.parametrize(
+    "raw_data",
+    [
+        {"content": f"x{NUL}y"},
+        {"departments": [{"name": f"Eng{NUL}"}]},
+        {"metadata": [[{"deep": [f"{NUL}"]}]]},
+        {f"key{NUL}": "value"},
+        {"nested": {f"key{NUL}": 1}},
+    ],
+    ids=["value", "nested-list", "deeply-nested", "key", "nested-key"],
+)
+def test_raw_data_containing_nul_anywhere_is_rejected(
+    raw_data: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError) as caught:
+        build(raw_data=raw_data)
+
+    assert nul_error_fields(caught.value) == {"raw_data"}
+
+
+def test_nul_is_rejected_not_stripped() -> None:
+    # Stripping would store a value the source never sent.
+    with pytest.raises(ValidationError):
+        build(title=f"{NUL}")
+    with pytest.raises(ValidationError):
+        build(location=f"  {NUL}  ")
+
+
+def test_text_without_nul_is_kept_exactly() -> None:
+    payload = {"content": "a\u0001b\tc\n", "list": ["é", 0, None, True]}
+
+    job = build(description="a\u0001b", raw_data=payload)
+
+    assert job.description == "a\u0001b"
+    assert job.raw_data == payload
+
+
+def test_a_very_deeply_nested_payload_does_not_exhaust_the_stack() -> None:
+    payload: dict[str, object] = {"leaf": "ok"}
+    for _ in range(5_000):
+        payload = {"n": payload}
+
+    assert build(raw_data=payload).raw_data is not None

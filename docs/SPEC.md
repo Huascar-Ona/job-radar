@@ -87,6 +87,19 @@ Every other field is carried straight across from the observation.
 
 Fields unavailable from a source must remain null rather than being inferred.
 
+### Text PostgreSQL cannot store
+
+Approved 2026-11-11. PostgreSQL cannot store the character U+0000 (NUL), not
+in a `text` column and not as `\u0000` inside `jsonb`. A normalized
+observation therefore rejects a NUL in any text field and in any key or
+string value of `raw_data`, however deeply nested. The posting becomes
+`invalid` (a `NormalizationError` whose reason names each affected field with
+the category `nul_character`), and the company continues.
+
+The value is rejected, never stripped or replaced: storing anything other
+than what the source sent would be inventing data. Without this rule a single
+such posting would fail its company's whole transaction.
+
 `department` was added to the model so that downstream role filtering has a
 first-class column to reason about instead of parsing `raw_data`.
 
