@@ -30,7 +30,7 @@ What exists, what it costs, and what would have to be true before adopting it.
 
 ### Claude Code
 **Category** coding agent · **Evidence** Repository-verified (every step so
-far, 0 through 4D-3, was produced with it)
+far, 0 through 4D-4, was produced with it)
 
 Terminal-based coding agent: reads files, runs commands, edits code, iterates on
 tool output. Its value in this project came from closing the loop itself — run
@@ -80,7 +80,7 @@ undocumented across all three sources — unrecoverable from code.
 **Category** reusable procedure + context · **Evidence** Repository-verified
 (file exists); behavior only partially exercised · **Job Radar status** one
 skill, `verify-change` (H-002), extended with a documentation impact review
-(H-003)
+(H-003) and evidence-capture rules (H-004)
 
 A packaged procedure with its context, loaded on demand when a task matches.
 Progressive disclosure: only the name and description are loaded every
@@ -106,8 +106,12 @@ procedure warned about.
   contradicted, or carries older debt. A contradiction the change introduces
   fails the gate; older debt is reported without failing it. The verdicts are
   agent judgment, not a deterministic check.
-- Reports PASS/FAIL/BLOCKED/SKIPPED per check and PASS/FAIL/BLOCKED/PARTIAL
-  overall.
+- Runs every gate in the foreground, saving its output outside the repository
+  and capturing its exit code immediately (H-004). PASS needs that exit code
+  and the tool's own completion output; a check that ran without them is
+  UNVERIFIED, never inferred to pass.
+- Reports PASS/FAIL/UNVERIFIED/BLOCKED/SKIPPED per check and
+  PASS/FAIL/BLOCKED/PARTIAL overall.
 
 It is followed by the agent, not enforced by the harness.
 
@@ -123,12 +127,26 @@ ADR-0011 said an unchanged job's upsert writes only `last_seen_at`; ADR-0006
 called two nullable fields required; README quoted test counts several steps
 old.
 
+**Symptom that justified evidence capture (H-004).** During Step 4D-4 an
+integration run was approved for one execution, but the agent ran it as a
+background command that discarded its output and exit code. The run used up
+the approval, yet its result could not be established. The skill had no
+status for that case, so it could only be misreported as passed, blocked or
+skipped. H-004 adds UNVERIFIED (ran, or may have run, without the evidence a
+PASS needs), a foreground capture pattern, per-tool pass evidence, a list of
+evidence-masking patterns, and the rule that a lost integration run consumes
+its approval: it is reported UNVERIFIED, overall PARTIAL, and not rerun
+without fresh approval. It is a procedural rule, not a new execution
+framework, and like the rest of the skill it is followed, not enforced.
+
 **Not yet verified (radar step 5).** Whether it solved the measured problem
 has not been shown. Since H-002 it has been exercised in working sessions, but
 not in any way recorded in this repository: with PostgreSQL available and each
 integration run approved separately, and with integration omitted (reported
 PARTIAL). A failing check reported through the skill has not been exercised.
 DOC-IMPACT has not been exercised beyond the change that introduced it.
+H-004's capture pattern was shown to preserve a nonzero exit code with a
+harmless command; it has not yet been exercised on a real lost-evidence run.
 
 ---
 
@@ -196,9 +214,9 @@ collide.
 
 **Trigger.** Concurrent agent work on the same repository.
 
-**Note [REPO].** This repository currently has **no commits at all**. Before
-worktrees are relevant, ordinary version control should be in use — a genuine
-gap in the present harness, and worth recording as one rather than glossing over.
+**Note [REPO].** When this entry was first written the repository had no
+commits, and that was recorded as a genuine gap in the harness. Ordinary
+version control is now in use, so the remaining trigger is concurrent work.
 
 ### Agent observability
 **Category** measurement · **Evidence** Vendor-documented (varies by tool) ·

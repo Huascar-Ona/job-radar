@@ -1,6 +1,6 @@
 ---
 name: verify-change
-description: Verify the current Job Radar working-tree change with the repository's existing gates (Ruff lint, Ruff format check, mypy strict, unit tests, PostgreSQL integration tests) plus a read-only documentation impact review (DOC-IMPACT), and report each check as PASS/FAIL/BLOCKED/SKIPPED with an overall PASS/FAIL/BLOCKED/PARTIAL. Use before claiming a change is done or verified, before committing, or when asked to verify, run the checks, or run make check.
+description: Verify the current Job Radar working-tree change with the repository's existing gates (Ruff lint, Ruff format check, mypy strict, unit tests, PostgreSQL integration tests) plus a read-only documentation impact review (DOC-IMPACT), and report each check as PASS/FAIL/UNVERIFIED/BLOCKED/SKIPPED, from captured exit codes and output, with an overall PASS/FAIL/BLOCKED/PARTIAL. Use before claiming a change is done or verified, before committing, or when asked to verify, run the checks, or run make check.
 argument-hint: "[integration=ask|no]"
 ---
 
@@ -33,11 +33,22 @@ agent, not enforced by the harness.
    count. There is no argument that pre-approves them.
 5. **Any doubt about the database target means do not run.** A working
    connection does not mean the target is safe.
-6. **Skipped or blocked is never passed.** A required check is PASS only if it
-   ran to completion and met its pass condition.
+6. **Skipped, blocked or unverified is never passed.** A check is PASS only
+   if it ran to completion and its captured evidence meets its pass condition
+   (section 5).
 7. **Run every check that can run.** One failure does not stop the others.
    That's why this skill does not use `make check`, which halts at the first
    failing target.
+8. **No PASS without captured evidence.** Run every gate in the foreground
+   with the capture pattern in section 5. PASS needs the exit code captured
+   from that run and its completion output. Never infer PASS from caches
+   (`.pytest_cache/v/cache/lastfailed` included), an earlier run, the absence
+   of error messages, or any other indirect evidence. A gate that ran, or may
+   have run, without that evidence is **UNVERIFIED**.
+9. **Lost evidence is not retried automatically.** If a gate ran and its
+   exit code or output was lost, report it UNVERIFIED and ask before
+   rerunning. For integration, the lost run consumed its approval (section
+   4e).
 
 ## 1. Record the starting state
 
@@ -210,6 +221,9 @@ If it raises, INTEGRATION is **BLOCKED**:
 - To help diagnose, you may run the read-only `docker compose ps`.
 - Tell the user they can start the database with `! make up`.
 
+Steps 4a, 4b and 4d are read-only probes, not gates. Run them directly; the
+capture pattern in section 5 is for gates.
+
 ### 4e. Ask
 
 Only after 4a–4d pass, ask in so many words:
@@ -219,22 +233,89 @@ Only after 4a–4d pass, ask in so many words:
 > `jobradar_migration_test`, and read from `<database>`. Run
 > `make test-integration` now?
 
-- Yes: run it.
+- Yes: run it once, with the capture pattern in section 5.
 - No, or any other answer: INTEGRATION is **SKIPPED**, reason "omitted by
   user".
 
+One approval covers one execution. The execution consumes it, whatever its
+outcome, including when its output is discarded, its exit code is lost, it
+times out, or you cannot establish whether it completed. In those cases:
+
+1. Report INTEGRATION **UNVERIFIED**.
+2. Say what evidence is missing.
+3. Say that the approval was consumed.
+4. Ask again, in the words above, before any rerun.
+
+Never use indirect evidence, such as caches or the state of the test
+databases, to justify a retry or a status.
+
 ## 5. Run the checks
 
-Run each check, recording the exact command, exit code and summary line, and
-keep going after failures.
+Run each check with the capture pattern below and keep going after failures.
 
-| Check | Command | PASS when |
+### Capture pattern
+
+Pick an evidence directory outside the repository: the session scratchpad if
+the harness provides one, otherwise a directory from `mktemp -d`. Check that
+it is not inside `git rev-parse --show-toplevel`. Then run each gate on its
+own, in the foreground, like this (bash and zsh):
+
+```
+<gate-command> > "<evidence-dir>/<check>.txt" 2>&1
+check_exit=$?
+printf 'CHECK_EXIT=%s\n' "$check_exit"
+tail -n 40 "<evidence-dir>/<check>.txt"
+```
+
+- `check_exit=$?` must come immediately after the gate. The exit code of the
+  whole shell command is `tail`'s; the gate's is only the `CHECK_EXIT=` line.
+- Do not run the pattern under `set -e` (errexit): a failing gate would end
+  the shell before `$?` is saved. `set +e` is fine as long as the gate's code
+  is still captured as above.
+- Set the tool timeout above the check's expected duration. If a check could
+  outlast the longest timeout available, say so and ask; do not background it.
+- If the tail does not show the completion evidence, read more of the output
+  file. Do not rerun the gate to see more.
+
+Never use a pattern that discards or masks evidence:
+
+- background execution (`&`), or `wait` in place of capturing the gate's code;
+- redirecting gate output to `/dev/null`;
+- `|| true`, `; true` or anything else that hides a failure;
+- a pipeline (`<gate> | tail`), whose status is the last command's;
+- environment overrides such as `PYTEST_ADDOPTS` that the user did not approve;
+- running a gate as a probe, placeholder or experiment. Every execution of a
+  gate is a real run: report it, and for integration it consumes the approval.
+
+### Per-check evidence
+
+Record for every executed check: the exact command, the captured exit code,
+the output file path, and the completion evidence below, quoted from the
+output file.
+
+| Check | Command | PASS when (all of) |
 |---|---|---|
-| LINT | `.venv/bin/ruff check .` | exit 0 |
-| FORMAT | `.venv/bin/ruff format --check .` | exit 0 |
-| TYPECHECK | `make typecheck` | exit 0 and output contains `Success:` |
-| UNIT | `make test-unit` | exit 0 and at least 1 passed |
-| INTEGRATION | `make test-integration` | exit 0 and at least 1 passed |
+| LINT | `.venv/bin/ruff check .` | exit 0; output shows completion: `All checks passed!` |
+| FORMAT | `.venv/bin/ruff format --check .` | exit 0; output shows completion: `<N> files already formatted` and no `Would reformat` |
+| TYPECHECK | `make typecheck` | exit 0; output contains `Success: no issues found in <N> source files` |
+| UNIT | `make test-unit` | exit 0; pytest's final summary line (`=== ... passed ... in <t>s ===`) with at least 1 passed and no `failed` or `error`; the passed, skipped, xfailed and xpassed counts add up to the tests the run itself selected (from its `collected` / `selected` line) |
+| INTEGRATION | `make test-integration` | same as UNIT |
+| DOC-IMPACT | read-only review (section 5a) | per section 5a, step 4. Agent judgment: there is no shell exit code; record `n/a`, never a made-up one |
+
+Never compare counts with README.md or an earlier run; the expected selection
+is the one this run reports.
+
+Status from the evidence:
+
+- **PASS**: every condition in the row holds.
+- **FAIL**: a captured nonzero exit code, even if no summary was printed; or
+  captured output that unambiguously shows failure (a pytest summary with
+  `failed` or `error`, Ruff violations, mypy errors) even if the exit code was
+  lost.
+- **UNVERIFIED**: the gate ran, or may have run, and the exit code or the
+  completion evidence is missing; for example the output was discarded, the
+  run timed out, the output is truncated or has no summary while exit was 0,
+  or the command was backgrounded. Name exactly what is missing.
 
 Record the exit code of the command exactly as invoked. For `make` targets
 that is make's own code, which is 2 whenever the recipe fails. Also record the
@@ -332,26 +413,35 @@ grep -rn -- '<term>' docs README.md CLAUDE.md .claude
 
 Each check has exactly one status:
 
-- **PASS**: ran and met its pass condition.
-- **FAIL**: ran and did not meet it.
-- **BLOCKED**: could not run because a prerequisite was missing or unsafe.
+- **PASS**: captured evidence meets the check's pass condition (section 5).
+- **FAIL**: captured evidence establishes that the check failed.
+- **UNVERIFIED**: ran, or may have run, but its exit code or required
+  completion evidence is missing. It is not BLOCKED (something may have
+  executed) and not SKIPPED (it was not deliberately left out).
+- **BLOCKED**: could not begin because a prerequisite was missing or unsafe.
 - **SKIPPED**: deliberately not run, either not required or omitted by
   decision.
 
 Apply these rules in order. The first match wins.
 
 1. **FAIL** if any check failed. That includes a non-required check that ran
-   anyway: failing evidence is never ignored. List any BLOCKED and SKIPPED
-   checks as well.
-2. **PASS** if every required check passed.
+   anyway: failing evidence is never ignored. List any UNVERIFIED, BLOCKED
+   and SKIPPED checks as well.
+2. **PASS** if every required check passed and no check is UNVERIFIED.
 3. **BLOCKED** if every required check was BLOCKED, so nothing required could
    execute.
 4. **PARTIAL** otherwise. That covers:
-   - some required checks passed and others were BLOCKED or SKIPPED;
+   - some required checks passed and others were UNVERIFIED, BLOCKED or
+     SKIPPED;
+   - a non-required check that ran anyway is UNVERIFIED: it may hide a
+     failure that rule 1 would otherwise surface;
    - every required check was deliberately SKIPPED;
-   - a mix of BLOCKED and SKIPPED with no PASS.
+   - a mix of UNVERIFIED, BLOCKED and SKIPPED with no PASS.
 
-Non-required checks that were SKIPPED never prevent PASS.
+Non-required checks that were SKIPPED never prevent PASS. A non-required
+check that ran is never ignored: if it FAILED the overall result is FAIL, and
+if it is UNVERIFIED the overall result cannot be PASS (it is PARTIAL unless
+another check FAILED). Neither case authorizes a rerun (hard rule 9).
 
 DOC-IMPACT is one more check under these rules, with the same statuses. It
 changes no other check's status.
@@ -366,6 +456,11 @@ section 1. Any difference is a defect of this run. Report it prominently.
 Fill in `report-template.md` (in this directory) and print it.
 
 - Quote commands, exit codes and pytest/mypy summary lines verbatim.
+- For each executed check give the captured exit code, the output file path
+  and the completion evidence, quoted from that file.
+- For each UNVERIFIED check, say what evidence is missing and why, whether
+  the command executed, and, for integration, that its approval was consumed
+  and a rerun needs fresh approval.
 - Never reuse numbers from README.md or from an earlier run.
 - Label DOC-IMPACT as agent judgment. List every document and section
   reviewed, the search terms, each verdict with its reason, and any debt.

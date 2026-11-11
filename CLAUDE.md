@@ -61,9 +61,12 @@ Before finishing:
 ## Verification
 
 Never claim a change is verified without evidence from checks that actually
-ran. Skipped, blocked or omitted checks are unverified, never passing; say so.
+ran. Skipped, blocked or omitted checks were not verified and never pass; say so.
+PASS needs the exit code and completion output captured from that run. Never
+declare PASS from incomplete or indirect evidence (caches, earlier runs, no
+visible errors); a check whose evidence is missing is UNVERIFIED.
 Integration tests need PostgreSQL and create/drop test databases: ask before
-each run.
+each run. A run consumes its approval even if its result is lost.
 
 ## Important invariants
 

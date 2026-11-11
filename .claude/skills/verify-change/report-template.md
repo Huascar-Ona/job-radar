@@ -2,6 +2,7 @@
 
 **Overall: <PASS | FAIL | BLOCKED | PARTIAL>**
 HEAD `<sha>` · working tree: <clean | N changed, M untracked>
+Evidence directory (outside the repository): `<absolute path>`
 
 ### Scope
 - Code-affecting paths: <list, or "none">
@@ -13,17 +14,22 @@ HEAD `<sha>` · working tree: <clean | N changed, M untracked>
 - Toplevel: <path> · `job_radar` imported from: <path> · <matches | MISMATCH>
 
 ### Checks
-Exit is the invoked command's code; for `make` targets add the tool's, e.g.
-`2 (pytest 1)`.
+Exit is the code captured with `check_exit=$?` right after the command
+(section 5); for `make` targets add the tool's, e.g. `2 (pytest 1)`. Write
+`lost` if it was not captured, and `n/a` for DOC-IMPACT, which has none.
 
-| Check | Required | Status | Command | Exit | Evidence |
-|---|---|---|---|---|---|
-| LINT | yes | | `.venv/bin/ruff check .` | | |
-| FORMAT | yes | | `.venv/bin/ruff format --check .` | | |
-| TYPECHECK | yes | | `make typecheck` | | |
-| UNIT | yes | | `make test-unit` | | |
-| INTEGRATION | <yes/no> | | `make test-integration` | | |
-| DOC-IMPACT | <yes/no> | | read-only review (section 5a) | n/a | <N documents reviewed> |
+| Check | Required | Status | Command | Exit | Output file | Completion evidence |
+|---|---|---|---|---|---|---|
+| LINT | yes | | `.venv/bin/ruff check .` | | | |
+| FORMAT | yes | | `.venv/bin/ruff format --check .` | | | |
+| TYPECHECK | yes | | `make typecheck` | | | |
+| UNIT | yes | | `make test-unit` | | | <final summary line; selected count> |
+| INTEGRATION | <yes/no> | | `make test-integration` | | | <final summary line; selected count> |
+| DOC-IMPACT | <yes/no> | | read-only review (section 5a) | n/a | n/a | <N documents reviewed; verdict summary> |
+
+Status is one of PASS, FAIL, UNVERIFIED, BLOCKED, SKIPPED. Any UNVERIFIED
+check, required or not, rules out overall PASS: the overall result is PARTIAL
+unless a check FAILED (section 6).
 
 ### Documentation impact (agent judgment, not a deterministic check)
 | Document | Sections reviewed | Verdict | Reason |
@@ -38,6 +44,13 @@ Exit is the invoked command's code; for `make` targets add the tool's, e.g.
 <For each FAIL: failing node ids or rule codes and the first relevant output
 lines. "None" otherwise.>
 
+### Unverified
+<For each UNVERIFIED check: what evidence is missing (exit code, completion
+output, both) and why; whether the command executed or may have; for
+INTEGRATION, "approval consumed; a rerun needs fresh approval". Include
+non-required checks that ran. No check is rerun without asking. "None"
+otherwise.>
+
 ### Blocked / skipped
 <For each: the reason, probe output with credentials removed, and the
 remediation the user can run.>
@@ -49,6 +62,7 @@ remediation the user can run.>
 - Destructive operations confirmed in tests/support/database.py: <...>
 - Safety gate: <passed | failed: reason>
 - Approval: <requested and given | requested and declined | not requested: reason>
+- Approval consumed: <yes, by the run above (result <status>) | no: not run>
 
 ### Not verified
 - Acceptance tests (ADR-0010 layer 4): none exist in the repository.
