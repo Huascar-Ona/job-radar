@@ -13,6 +13,7 @@ count every posting on every board as invalid.
 
 import copy
 import html
+import re
 from datetime import UTC, datetime
 from typing import Final
 
@@ -28,8 +29,9 @@ SOURCE: Final = JobSource.GREENHOUSE
 #: none of it belongs in a log line.
 _REASON_MAX_CHARS: Final = 300
 
-#: How much of a rejected timestamp value to quote.
-_VALUE_EXCERPT_CHARS: Final = 40
+#: A location segment or validation category quoted in a reason: a plain
+#: identifier. Anything else is replaced, never quoted.
+_IDENTIFIER: Final = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
 
 
 class GreenhouseNormalizer:
@@ -60,10 +62,7 @@ class GreenhouseNormalizer:
             )
         source_job_id = _known_source_job_id(posting)
 
-        try:
-            parsed = GreenhousePosting.model_validate(posting)
-        except ValidationError as exc:
-            raise _invalid(source_job_id, _summarize(exc)) from exc
+        parsed = _parse(source_job_id, posting)
 
         published = _timestamp(source_job_id, "first_published", parsed.first_published)
         updated = _timestamp(source_job_id, "updated_at", parsed.updated_at)
@@ -98,7 +97,18 @@ class GreenhouseNormalizer:
         except ValidationError as exc:
             # The source fields had the right types but violate the domain
             # contract, e.g. a whitespace-only title or URL.
-            raise _invalid(source_job_id, _summarize(exc)) from exc
+            failure = _invalid(source_job_id, _summarize(exc))
+        # Raised outside the except block: a ValidationError's own text quotes
+        # input values, so it is neither the cause nor the context.
+        raise failure
+
+
+def _parse(source_job_id: str | None, posting: object) -> GreenhousePosting:
+    try:
+        return GreenhousePosting.model_validate(posting)
+    except ValidationError as exc:
+        failure = _invalid(source_job_id, _summarize(exc))
+    raise failure
 
 
 def _check_arguments(*, company: str, observed_at: datetime) -> None:
@@ -131,40 +141,58 @@ def _timestamp(
     """
     if value is None:
         return None
+    # The value itself is never quoted: it is source content (SPEC, "Safe
+    # error messages"). fromisoformat's own error quotes it, so that error is
+    # discarded rather than chained.
+    moment: datetime | None
     try:
         moment = datetime.fromisoformat(value)
-    except ValueError as exc:
-        raise _invalid(
-            source_job_id,
-            f"{field}: not an ISO 8601 timestamp: {_excerpt(value)}",
-        ) from exc
+    except ValueError:
+        moment = None
+    if moment is None:
+        raise _invalid(source_job_id, f"{field}: not an ISO 8601 timestamp")
     if moment.tzinfo is None or moment.utcoffset() is None:
-        raise _invalid(
-            source_job_id,
-            f"{field}: timestamp has no timezone offset: {_excerpt(value)}",
-        )
+        raise _invalid(source_job_id, f"{field}: timestamp has no timezone offset")
     return moment.astimezone(UTC)
 
 
 def _summarize(exc: ValidationError) -> str:
-    """Field locations and messages only. Input values are never included."""
+    """Field locations, validation categories and actual types only.
+
+    Pydantic's ``msg`` is not used: depending on the error type it can quote
+    the input or constraint context. The input is read only for its type
+    name, e.g. ``id: int_type (got str)``.
+    """
     parts = []
-    for error in exc.errors(include_input=False, include_url=False):
-        location = ".".join(str(part) for part in error["loc"]) or "posting"
-        parts.append(f"{location}: {error['msg']}")
+    for error in exc.errors(include_url=False, include_context=False):
+        location = ".".join(_location_part(part) for part in error["loc"])
+        category = _identifier(error["type"], fallback="invalid")
+        if category == "missing":
+            detail = "missing"
+        else:
+            actual = _identifier(type(error.get("input")).__name__, fallback="value")
+            detail = f"{category} (got {actual})"
+        parts.append(f"{location or 'posting'}: {detail}")
     return _bounded("; ".join(parts))
+
+
+def _location_part(part: int | str) -> str:
+    # A location is a schema field name or a list index. A mapping key taken
+    # from the input would also appear here, so anything that is not a plain
+    # identifier is replaced rather than quoted.
+    if isinstance(part, int):
+        return str(part)
+    return _identifier(part, fallback="<key>")
+
+
+def _identifier(text: str, *, fallback: str) -> str:
+    return text if _IDENTIFIER.fullmatch(text) else fallback
 
 
 def _invalid(source_job_id: str | None, reason: str) -> NormalizationError:
     return NormalizationError(
         source=SOURCE, source_job_id=source_job_id, reason=_bounded(reason)
     )
-
-
-def _excerpt(value: str) -> str:
-    if len(value) <= _VALUE_EXCERPT_CHARS:
-        return repr(value)
-    return repr(value[:_VALUE_EXCERPT_CHARS]) + "..."
 
 
 def _bounded(text: str) -> str:

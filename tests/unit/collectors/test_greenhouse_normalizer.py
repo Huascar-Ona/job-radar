@@ -7,6 +7,7 @@ captured fixtures in tests/fixtures/greenhouse/: no database, no network.
 
 import copy
 import json
+import traceback
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -481,10 +482,94 @@ def test_rejection_reason_does_not_embed_the_payload() -> None:
     assert len(str(error)) < 500
 
 
-def test_rejected_timestamp_value_is_quoted_briefly() -> None:
+def test_rejected_timestamp_value_is_not_quoted() -> None:
     error = rejection(posting_with(updated_at="9" * 5_000))
 
-    assert len(error.reason) < 200
+    assert error.reason == "updated_at: not an ISO 8601 timestamp"
+
+
+# --- safe rejection reasons (SPEC, "Safe error messages") -------------------
+
+SECRET = "SECRET-MARKER-9e2d"
+
+
+def assert_safe(error: NormalizationError) -> None:
+    """No marker anywhere a caller could read it, and no exception chain."""
+    assert error.__cause__ is None
+    assert error.__context__ is None
+    for text in (
+        error.reason,
+        str(error),
+        repr(error),
+        repr(error.args),
+        repr(error.log_context()),
+        "".join(traceback.format_exception(error)),
+    ):
+        assert SECRET not in text, text
+
+
+@pytest.mark.parametrize("field", ["first_published", "updated_at"])
+@pytest.mark.parametrize(
+    ("value", "reason"),
+    [
+        (SECRET, "not an ISO 8601 timestamp"),
+        (f"2026-09-10T00:00:00{SECRET}", "not an ISO 8601 timestamp"),
+        ("2026-09-10T00:00:00", "timestamp has no timezone offset"),
+    ],
+    ids=["text", "suffix", "naive"],
+)
+def test_a_rejected_timestamp_reason_names_the_field_not_the_value(
+    field: str, value: str, reason: str
+) -> None:
+    error = rejection(posting_with(**{field: value}))
+
+    assert error.reason == f"{field}: {reason}"
+    assert_safe(error)
+
+
+def test_a_type_mismatch_reason_gives_category_and_actual_type() -> None:
+    error = rejection(posting_with(id=SECRET))
+
+    assert error.reason == "id: int_type (got str)"
+    assert_safe(error)
+
+
+def test_a_missing_field_reason_says_missing() -> None:
+    error = rejection(posting_without("title"))
+
+    assert error.reason == "title: missing"
+
+
+def test_a_nested_mismatch_reason_keeps_the_location() -> None:
+    error = rejection(posting_with(departments=[{"name": 7}]))
+
+    assert error.reason == "departments.0.name: string_type (got int)"
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"title": [SECRET]},
+        {"absolute_url": {"href": SECRET}},
+        {"location": SECRET},
+        {"content": [SECRET]},
+        {"departments": [{"name": [SECRET]}]},
+    ],
+    ids=["title", "absolute_url", "location", "content", "nested"],
+)
+def test_validation_reasons_never_quote_source_values(
+    fields: dict[str, object],
+) -> None:
+    error = rejection(posting_with(**fields))
+
+    assert_safe(error)
+
+
+def test_a_domain_contract_violation_is_not_chained() -> None:
+    error = rejection(posting_with(title=f"  {' ' * 10}"))
+
+    assert error.reason == "title: string_too_short (got str)"
+    assert_safe(error)
 
 
 def test_reason_names_every_failing_field() -> None:

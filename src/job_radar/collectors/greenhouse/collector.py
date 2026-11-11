@@ -10,9 +10,17 @@ and no `Retry-After` header, so nothing is retried here (ADR-0016); error
 bodies are not reliably JSON, so status is classified before any body is
 parsed; and `content=true` is matched literally, so the parameter is sent as
 that exact string.
+
+Error messages are safe by construction (SPEC, "Safe error messages"). They
+are assembled only from fixed text, the HTTP status code, Python type names
+and integer counts. Response bodies, exception text and source values are
+never quoted, and no ``CollectorError`` carries the exception that caused it:
+each is raised after its ``except`` block has ended, so it has neither a
+``__cause__`` nor a ``__context__``.
 """
 
 import json
+import re
 from collections.abc import Sequence
 from typing import Final
 
@@ -36,9 +44,12 @@ _PATH_DELIMITERS: Final = frozenset("/?#")
 #: becomes "/v1/jobs", a different endpoint entirely.
 _RELATIVE_SEGMENTS: Final = frozenset({".", ".."})
 
-#: Enough of a failing body to diagnose with, not enough to paste an HTML page
-#: into a log line.
-_ERROR_EXCERPT_CHARS: Final = 200
+#: An exception class name quoted in a message: a plain identifier, bounded.
+_CATEGORY: Final = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
+
+#: Largest ``meta.total`` quoted verbatim. Any JSON integer parses, so a
+#: hostile one could otherwise be thousands of digits long.
+_MAX_QUOTED_TOTAL: Final = 10**9
 
 
 def create_client(*, timeout_seconds: float) -> httpx.Client:
@@ -85,10 +96,10 @@ class GreenhouseCollector:
 
         response = self._get(board_token)
         if response.status_code != httpx.codes.OK:
+            # The status code only: an error body is provider-controlled
+            # content, not a diagnosis (SPEC, "Safe error messages").
             raise self._failure(
-                board_token,
-                "fetch",
-                f"HTTP {response.status_code}: {_excerpt(response)}",
+                board_token, "fetch", f"HTTP {int(response.status_code)}"
             )
         return self._postings(board_token, response)
 
@@ -96,6 +107,7 @@ class GreenhouseCollector:
 
     def _get(self, board_token: str) -> httpx.Response:
         url = f"{BOARDS_API_ROOT}/boards/{board_token}/jobs"
+        failure: CollectorError
         try:
             # `content=true` is matched literally by Greenhouse: any other
             # value silently omits content, departments and offices (SPEC).
@@ -109,24 +121,30 @@ class GreenhouseCollector:
                 params={"content": "true"},
                 headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
             )
-        except httpx.TimeoutException as exc:
-            raise self._failure(
-                board_token, "fetch", f"request timeout: {exc}"
-            ) from exc
+        except httpx.TimeoutException:
+            failure = self._failure(board_token, "fetch", "request timeout")
         except httpx.HTTPError as exc:
-            raise self._failure(
-                board_token, "fetch", f"{type(exc).__name__}: {exc}"
-            ) from exc
+            failure = self._failure(
+                board_token, "fetch", f"transport error ({_category(exc)})"
+            )
+        # Raised outside the except block: the httpx exception, whose text may
+        # carry anything, is neither the cause nor the context.
+        raise failure
 
     # -- envelope ------------------------------------------------------------
 
     def _postings(self, board_token: str, response: httpx.Response) -> Sequence[object]:
+        body: object
         try:
-            body: object = response.json()
-        except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
-            raise self._failure(
-                board_token, "decode", f"response is not valid JSON: {exc}"
-            ) from exc
+            body = response.json()
+        except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
+            invalid_json = True
+        else:
+            invalid_json = False
+        # Decoder messages quote positions and bytes of the body; none of it
+        # is kept, and the decoder error is not chained.
+        if invalid_json:
+            raise self._failure(board_token, "decode", "response is not valid JSON")
 
         if not isinstance(body, dict):
             raise self._failure(
@@ -181,10 +199,11 @@ class GreenhouseCollector:
                 f"'meta.total' is not an integer, got {type(total).__name__}",
             )
         if total != job_count:
+            quoted = str(total) if abs(total) <= _MAX_QUOTED_TOTAL else "out of range"
             raise self._failure(
                 board_token,
                 "decode",
-                f"'meta.total' is {total} but 'jobs' has {job_count} entries",
+                f"'meta.total' is {quoted} but 'jobs' has {job_count} entries",
             )
 
     def _failure(
@@ -216,15 +235,7 @@ def _path_segment_problem(board_token: str) -> str | None:
     return None
 
 
-def _excerpt(response: httpx.Response) -> str:
-    """A short, safe rendering of a failing body, JSON or not."""
-    try:
-        text = response.text.strip()
-    except (UnicodeDecodeError, httpx.ResponseNotRead):  # pragma: no cover
-        return "<unreadable body>"
-    if not text:
-        return "<empty body>"
-    collapsed = " ".join(text.split())
-    if len(collapsed) <= _ERROR_EXCERPT_CHARS:
-        return collapsed
-    return collapsed[:_ERROR_EXCERPT_CHARS] + "..."
+def _category(exc: BaseException) -> str:
+    """The exception's class name, if it is a plain identifier."""
+    name = type(exc).__name__
+    return name if _CATEGORY.fullmatch(name) else "HTTPError"

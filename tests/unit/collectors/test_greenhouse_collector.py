@@ -5,6 +5,8 @@ the suite does not depend on Greenhouse being up, or on any board still
 existing (ADR-0010's reasoning applied to HTTP rather than to the database).
 """
 
+import json
+import traceback
 from collections.abc import Callable
 
 import httpx
@@ -508,6 +510,125 @@ def test_jobs_type_is_checked_before_meta(jobs: object) -> None:
     error = assert_decode_failure({"jobs": jobs, "meta": {"total": "bad"}})
 
     assert "jobs" in error.message
+
+
+# --- safe error messages (SPEC, "Safe error messages") ----------------------
+
+SECRET = "SECRET-MARKER-c41b"
+
+
+def failure_of(handler: Callable[[httpx.Request], httpx.Response]) -> CollectorError:
+    collector, _ = collector_for(handler)
+
+    with pytest.raises(CollectorError) as caught:
+        collector.fetch_jobs(board_token=BOARD)
+
+    return caught.value
+
+
+def assert_safe(error: CollectorError) -> None:
+    """No marker anywhere a caller could read it, and no exception chain."""
+    assert error.__cause__ is None
+    assert error.__context__ is None
+    for text in (
+        error.message,
+        str(error),
+        repr(error),
+        repr(error.args),
+        repr(error.log_context()),
+        "".join(traceback.format_exception(error)),
+    ):
+        assert SECRET not in text, text
+
+
+@pytest.mark.parametrize("status", [404, 429, 500, 503])
+@pytest.mark.parametrize(
+    "body",
+    [
+        f"<html><body>{SECRET}</body></html>",
+        f'{{"error": "{SECRET}"}}',
+        SECRET * 1_000,
+    ],
+    ids=["html", "json", "long"],
+)
+def test_an_http_failure_reports_only_its_status(status: int, body: str) -> None:
+    error = failure_of(responding(status, text=body))
+
+    assert error.operation == "fetch"
+    assert error.message == f"HTTP {status}"
+    assert_safe(error)
+
+
+def test_a_timeout_has_a_fixed_message() -> None:
+    error = failure_of(raising(httpx.ReadTimeout(f"timed out reading {SECRET}")))
+
+    assert error.operation == "fetch"
+    assert error.message == "request timeout"
+    assert_safe(error)
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        httpx.ConnectError(f"[Errno 8] cannot resolve {SECRET}"),
+        httpx.RemoteProtocolError(f"peer closed: {SECRET}"),
+        httpx.ReadError(SECRET),
+    ],
+    ids=lambda exc: type(exc).__name__,
+)
+def test_a_transport_failure_reports_only_its_category(exc: httpx.HTTPError) -> None:
+    error = failure_of(raising(exc))
+
+    assert error.operation == "fetch"
+    assert error.message == f"transport error ({type(exc).__name__})"
+    assert_safe(error)
+
+
+def test_invalid_json_has_a_fixed_message() -> None:
+    error = failure_of(responding(200, text=f'{{"jobs": [{SECRET}]}}'))
+
+    assert error.operation == "decode"
+    assert error.message == "response is not valid JSON"
+    assert_safe(error)
+
+
+def test_a_decoder_error_quoting_the_body_is_not_kept(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The standard decoder quotes positions only; one that quoted the body
+    # must not get through either.
+    def decode(_self: httpx.Response, **_: object) -> object:
+        raise json.JSONDecodeError(f"unexpected {SECRET}", SECRET, 0)
+
+    monkeypatch.setattr(httpx.Response, "json", decode)
+
+    error = failure_of(responding(200, json_body=board()))
+
+    assert error.message == "response is not valid JSON"
+    assert_safe(error)
+
+
+def test_undecodable_bytes_have_a_fixed_message() -> None:
+    error = failure_of(
+        lambda _: httpx.Response(200, content=b'{"jobs": "\xff' + SECRET.encode())
+    )
+
+    assert error.message == "response is not valid JSON"
+    assert_safe(error)
+
+
+def test_an_absurd_total_is_not_quoted() -> None:
+    error = assert_decode_failure({"jobs": [], "meta": {"total": 10**200}})
+
+    assert "out of range" in error.message
+    assert len(error.message) < 100
+
+
+def test_decode_failures_name_types_not_values() -> None:
+    error = assert_decode_failure({"jobs": SECRET})
+
+    assert error.message == "'jobs' is not a list, got str"
+    assert_safe(error)
 
 
 # --- client construction ----------------------------------------------------
