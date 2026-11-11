@@ -132,6 +132,36 @@ is not logged in normal company-failure reporting. A failed company's result
 records the class name (`CollectorError` or `PersistenceError`) as
 `error_type` and only the sanitized safe message as `error_message`.
 
+Every database call the adapter makes is translated this way: opening the
+session, each repository call and the commit. The error's `operation` names
+the transaction (`reconcile_config`, `start_run`, `persist_company`,
+`record_company_failure`, `finish_run`), with the suffix `_commit` when the
+commit itself fails. A non-SQLAlchemy exception is a programming error and
+propagates unchanged.
+
+### Safe source error messages
+
+The same reasoning applies to the source side. Provider error bodies,
+transport exception text and decoder messages are untrusted content, and so
+are posting values. Truncating them bounds their size but not what they say,
+so collector and normalizer messages are **safe by construction**:
+
+- `CollectorError` messages use only fixed text, the HTTP status code, an
+  httpx exception class name, JSON type names and counts: `HTTP 503`,
+  `request timeout`, `transport error (ConnectError)`,
+  `response is not valid JSON`. No response body or exception text is quoted,
+  and the causing exception is not chained.
+- `NormalizationError` reasons use only field locations, Pydantic validation
+  categories and actual type names, e.g. `id: int_type (got str)`. Source
+  values, including timestamp excerpts, and Pydantic's message text are never
+  quoted, and the causing exception is not chained.
+
+The cost is diagnostic detail: an error body or a rejected value is no longer
+visible in the logs. The status code, field and type identify the failure
+class, and `raw_data` keeps every successfully normalized posting.
+The ingestion service's 500-character bound on messages remains as a
+backstop. SPEC "Safe error messages" lists the messages.
+
 ### Failure classes during a run
 
 The Decision's "only a `CollectorError` fails it" contrasts the collector with

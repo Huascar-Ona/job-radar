@@ -286,6 +286,11 @@ completeness was not verified, as proof that the company's jobs disappeared
 Approved 2026-11-10. `IngestionService.run()` performs, in order:
 
 1. **Reconcile configuration** in its own transaction (see "Configuration").
+   Before that transaction commits, every enabled company's source is checked
+   against the wired collectors. An enabled company whose source has no
+   collector raises `ValueError`: reconciliation rolls back, no run row is
+   opened and no company is fetched. This is a wiring error in the caller,
+   not a crawl failure.
 2. **Start the run**: take `observed_at` once from the injected clock, open the
    `crawl_runs` row in the `running` state, and commit it.
 3. **Crawl each enabled company sequentially**: fetch through the collector
@@ -301,8 +306,17 @@ and `finished_at` are read from the same injected `Clock` as timing metadata
 only; they are not observation times and do not change the run's single
 `observed_at`.
 
+The run's `finished_at` is also read from the injected `Clock`, once, when
+the run is finished.
+
 A run over zero enabled companies still reconciles, opens and finishes its
 run row, and records `success` with zero counters.
+
+Failures outside any company's processing are not company failures. A
+`PersistenceError` while reconciling configuration, opening the run row or
+finishing it propagates out of `run()`: before the run row exists there is
+nothing to record, and a run that cannot be finished remains `running`
+(see "Crawl outcome model").
 
 The service is source-agnostic: it depends on the `Collector` and
 `Normalizer` protocols and on the domain model only. Source-specific wiring
@@ -320,7 +334,7 @@ The failure must be logged with enough context to identify:
 - board_token
 - display_name
 - operation
-- error (safe details only; see "Persistence errors")
+- error (safe details only; see "Safe error messages" and "Persistence errors")
 
 A company failure has no effect on the stored rows of that company. Its jobs
 are neither touched, restamped, nor deactivated.
@@ -343,6 +357,37 @@ A failed company's result is recorded in a **new** transaction, after its
 own transaction has rolled back, with status `failed`, zero counters, and its
 error type and safe message.
 
+### Safe error messages
+
+Approved 2026-11-10. Error messages that are logged or persisted are safe by
+construction, not by truncation. They are assembled only from fixed text,
+HTTP status codes, field names, validation categories, Python type names and
+integer counts. Source content is untrusted and never quoted.
+
+`CollectorError` messages:
+
+| Failure | Message |
+|---|---|
+| Non-200 response | `HTTP <status>`; the response body is never included |
+| Timeout | `request timeout` |
+| Any other transport failure | `transport error (<httpx exception class name>)` |
+| Body that is not valid JSON | `response is not valid JSON`; no decoder text |
+| Envelope shape (`jobs`, `meta`, `meta.total`) | The key and the actual JSON type, or the two counts; a `meta.total` beyond 10^9 is reported as out of range rather than quoted |
+
+The `CollectorError` is raised without the exception that caused it: it has
+neither a `__cause__` nor a `__context__`. Its `source`, `company` and
+`operation` context is unchanged.
+
+`NormalizationError` reasons name the failing field, the validation category
+and the actual type, e.g. `id: int_type (got str)`, `title: missing` or
+`updated_at: timestamp has no timezone offset`. They never include a source
+value (timestamp excerpts included), `raw_data`, or Pydantic's own message
+text, which can quote input. A location segment that is not a plain field
+name is replaced. The `ValidationError` or parsing error is not chained.
+
+The ingestion service still bounds every logged or persisted message to 500
+characters, as a backstop rather than as the sanitization.
+
 ### Persistence errors
 
 The persistence adapter translates every SQLAlchemy failure into
@@ -362,6 +407,23 @@ message. Therefore:
 - `crawl_company_results.error_type` records the Job Radar error class
   (`CollectorError` or `PersistenceError`) and `error_message` only its
   sanitized safe message, never the original exception text.
+- Opening a session, every repository call and the commit are translated
+  alike. A non-SQLAlchemy exception from any of them is a programming error
+  and propagates unchanged.
+
+Each `PersistenceError` names the transaction it failed in as its
+`operation`:
+
+| Operation | Transaction |
+|---|---|
+| `reconcile_config` | Configuration reconciliation |
+| `start_run` | Opening the run row |
+| `persist_company` | A company's job writes and success record |
+| `record_company_failure` | A failed company's result |
+| `finish_run` | Finishing the run row |
+
+A failure of the commit itself adds the suffix `_commit`, e.g.
+`persist_company_commit`.
 
 ## Crawl outcome model
 

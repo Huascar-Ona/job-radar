@@ -6,6 +6,7 @@ from job_radar.domain.errors import (
     CollectorError,
     JobRadarError,
     NormalizationError,
+    PersistenceError,
 )
 
 
@@ -68,6 +69,66 @@ def test_one_except_clause_catches_every_domain_error() -> None:
     for error in (
         CollectorError(source="s", company="c", operation="o", message="m"),
         NormalizationError(source="s", source_job_id=None, reason="r"),
+        PersistenceError(operation="o", category="OperationalError"),
     ):
         with pytest.raises(JobRadarError):
             raise error
+
+
+# --- PersistenceError (SPEC "Persistence errors") ---------------------------
+
+
+def test_persistence_error_message_is_category_and_sqlstate() -> None:
+    error = PersistenceError(
+        operation="persist_company", category="IntegrityError", sqlstate="23505"
+    )
+
+    assert error.message == "IntegrityError (SQLSTATE 23505)"
+    assert error.log_context() == {
+        "operation": "persist_company",
+        "error": "IntegrityError (SQLSTATE 23505)",
+    }
+    assert str(error) == "persist_company failed: IntegrityError (SQLSTATE 23505)"
+
+
+def test_persistence_error_without_sqlstate() -> None:
+    error = PersistenceError(operation="start_run", category="OperationalError")
+
+    assert error.message == "OperationalError"
+    assert error.sqlstate is None
+
+
+@pytest.mark.parametrize(
+    "category",
+    ["", "Integrity Error", "IntegrityError: Key (raw_data)=(x)", "x" * 65, "1Bad"],
+)
+def test_persistence_error_replaces_a_category_that_is_not_a_class_name(
+    category: str,
+) -> None:
+    error = PersistenceError(operation="start_run", category=category)
+
+    assert error.category == "DatabaseError"
+    assert error.message == "DatabaseError"
+
+
+@pytest.mark.parametrize("sqlstate", ["", "2350", "235051", "23 05", "abcde", "x\n1"])
+def test_persistence_error_drops_a_malformed_sqlstate(sqlstate: str) -> None:
+    error = PersistenceError(
+        operation="start_run", category="IntegrityError", sqlstate=sqlstate
+    )
+
+    assert error.sqlstate is None
+    assert error.message == "IntegrityError"
+
+
+def test_persistence_error_replaces_an_operation_that_is_not_a_name() -> None:
+    error = PersistenceError(operation="drop table jobs", category="IntegrityError")
+
+    assert error.operation == "persistence"
+
+
+def test_persistence_error_message_is_bounded() -> None:
+    longest = PersistenceError(operation="o" * 64, category="C" * 64, sqlstate="23505")
+
+    assert len(longest.message) <= 100
+    assert len(str(longest)) <= 200

@@ -24,6 +24,7 @@ FORBIDDEN_PREFIXES = (
     "http",
     "socket",
     "yaml",
+    "job_radar.ingestion",
 )
 
 
@@ -268,3 +269,60 @@ def test_normalization_calls_no_open_or_clock(path: Path) -> None:
                 called.add(node.func.attr)
 
     assert not called & NORMALIZER_FORBIDDEN_CALLS
+
+
+# --- ingestion orchestrates; it does not know sources or SQL ----------------
+
+import job_radar.ingestion  # noqa: E402
+
+INGESTION_ROOT = Path(job_radar.ingestion.__file__).parent
+
+# SPEC "Ingestion run": the service is source-agnostic. Source wiring and the
+# SQLAlchemy adapter are supplied by the caller, so nothing here may import a
+# source package, transport, or the persistence layer (which would bring
+# SQLAlchemy with it).
+INGESTION_FORBIDDEN_PREFIXES = (
+    "job_radar.collectors.greenhouse",
+    "greenhouse",
+    "httpx",
+    "requests",
+    "urllib",
+    "http",
+    "socket",
+    "sqlalchemy",
+    "alembic",
+    "psycopg",
+    "job_radar.persistence",
+)
+
+
+def ingestion_modules() -> list[Path]:
+    return sorted(INGESTION_ROOT.rglob("*.py"))
+
+
+def test_ingestion_package_has_its_modules() -> None:
+    # Guards the guard: a renamed service would make the checks vacuous.
+    names = {path.name for path in ingestion_modules()}
+    assert {"service.py", "ports.py", "summary.py"} <= names
+
+
+@pytest.mark.parametrize("path", ingestion_modules(), ids=lambda p: p.name)
+def test_ingestion_imports_no_source_transport_or_sql(path: Path) -> None:
+    offenders = {
+        name
+        for name in imported_modules_and_members(path)
+        for prefix in INGESTION_FORBIDDEN_PREFIXES
+        if name == prefix or name.startswith(f"{prefix}.")
+    }
+
+    assert not offenders, f"{path.name} imports {sorted(offenders)}"
+
+
+@pytest.mark.parametrize("path", ingestion_modules(), ids=lambda p: p.name)
+def test_ingestion_never_commits_or_rolls_back(path: Path) -> None:
+    # Transactions are opened through the injected store factory; committing
+    # and rolling back belong to the persistence adapter.
+    source = path.read_text(encoding="utf-8")
+
+    assert ".commit(" not in source
+    assert ".rollback(" not in source

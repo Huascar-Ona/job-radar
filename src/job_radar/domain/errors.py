@@ -5,6 +5,9 @@ carrying enough context to identify source, company and operation
 (SPEC, "Failure isolation").
 """
 
+import re
+from typing import Final
+
 
 class JobRadarError(Exception):
     """Base class for every error this application raises deliberately."""
@@ -59,3 +62,51 @@ class NormalizationError(JobRadarError):
             "operation": "normalize",
             "error": self.reason,
         }
+
+
+#: A SQLAlchemy exception class name: an identifier, never free text.
+_CATEGORY: Final = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
+#: SQLSTATE is five characters of digits and upper-case letters (SQL standard).
+_SQLSTATE: Final = re.compile(r"[0-9A-Z]{5}")
+#: Operation names are chosen by Job Radar code, never taken from a database.
+_OPERATION: Final = re.compile(r"[a-z][a-z0-9_]{0,63}")
+_FALLBACK_CATEGORY: Final = "DatabaseError"
+_FALLBACK_OPERATION: Final = "persistence"
+
+
+class PersistenceError(JobRadarError):
+    """The database could not complete a write or read ingestion needed.
+
+    Raised by the persistence adapter in place of every SQLAlchemy failure,
+    so the ingestion service never depends on SQLAlchemy (ADR-0016 addendum).
+
+    Driver and SQLAlchemy exception text can carry SQL, bound parameters and
+    row content, ``raw_data`` included, even in its first line. This class
+    therefore accepts no free text at all: its message is built only from
+    the exception category (a class name) and an optional SQLSTATE code, and
+    anything that does not look like one of those is replaced, not quoted.
+    The result is short and bounded by construction.
+    """
+
+    def __init__(
+        self, *, operation: str, category: str, sqlstate: str | None = None
+    ) -> None:
+        self.operation = (
+            operation if _OPERATION.fullmatch(operation) else _FALLBACK_OPERATION
+        )
+        self.category = (
+            category if _CATEGORY.fullmatch(category) else _FALLBACK_CATEGORY
+        )
+        self.sqlstate = (
+            sqlstate if sqlstate is not None and _SQLSTATE.fullmatch(sqlstate) else None
+        )
+        self.message = (
+            self.category
+            if self.sqlstate is None
+            else f"{self.category} (SQLSTATE {self.sqlstate})"
+        )
+        super().__init__(f"{self.operation} failed: {self.message}")
+
+    def log_context(self) -> dict[str, str]:
+        """Structured-log fields; every value is safe by construction."""
+        return {"operation": self.operation, "error": self.message}

@@ -252,7 +252,9 @@ it is committed independently of any single company's transaction.
 
 Transactions within one run (approved 2026-11-10; SPEC, "Ingestion run"):
 
-1. Configuration reconciliation.
+1. Configuration reconciliation, including the check that every enabled
+   company's source has a collector wired. A wiring error raises
+   `ValueError` before this transaction commits, so it rolls back.
 2. Opening the run row in the `running` state.
 3. One per company: its job writes and, on success, its result row. On
    failure it rolls back, and the failed result is written in a further,
@@ -260,7 +262,8 @@ Transactions within one run (approved 2026-11-10; SPEC, "Ingestion run"):
 4. Finishing the run row.
 
 If the separate failure-record transaction also fails, the run aborts and may
-remain `running`.
+remain `running`. A `PersistenceError` in transactions 1, 2 or 4 is not a
+company failure: it propagates out of the run.
 
 The persistence adapter, not the ingestion service, translates SQLAlchemy
 failures into `PersistenceError`, whose message never contains SQL, bound
