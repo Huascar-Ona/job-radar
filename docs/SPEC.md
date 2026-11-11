@@ -27,6 +27,20 @@ entry carries `source`, `board_token`, `display_name` and `enabled` (ADR-0012).
 This file is the sole source of configured boards for the MVP. Database-managed
 configuration and an admin UI are explicitly out of scope.
 
+Reconciliation happens at the start of every `IngestionService.run()`, before
+the run row is created (approved 2026-11-10):
+
+- Every configured board is synced into `companies`, enabled or not, so the
+  stored `is_enabled` flag follows the file.
+- For every supported source, companies whose board token the file no longer
+  lists are disabled, never deleted. A source with no configured boards has
+  all of its companies disabled.
+- The companies crawled are the enabled ones read back after reconciliation,
+  in the deterministic order `CompanyRepository.enabled_companies()` returns.
+- Disabled and removed boards are not crawled, get no per-company result for
+  the run, and their stored jobs are not modified. Disabling a board is not
+  job deactivation (ADR-0004).
+
 ## Observation versus stored job
 
 These are two different things and must not be conflated.
@@ -117,6 +131,25 @@ never stored numerically.
 for a given job, `source_published_at` is null; it is never backfilled from
 `first_seen_at` or from `updated_at`.
 
+## Greenhouse board completeness (`meta.total`)
+
+Approved 2026-11-10 (ADR-0016 addendum). The Board API envelope is
+`{"jobs": [...], "meta": {"total": <integer>}}`. `meta.total` is observed, not
+documented (see below), so its absence is tolerated; when present, it is
+enforced:
+
+| `meta` / `meta.total` in the response | Collector behavior |
+|---|---|
+| `meta` absent or null | Accepted. Completeness is **not verified** for that response. |
+| `meta` present and non-null but not a JSON object (list, string, number, boolean) | `CollectorError`, operation `decode` |
+| `meta.total` absent or null | Accepted. Completeness is **not verified** for that response. |
+| `meta.total` a JSON integer equal to `len(jobs)` | Accepted. Completeness verified. |
+| `meta.total` a JSON integer different from `len(jobs)`, in either direction | `CollectorError`, operation `decode` |
+| `meta.total` present but not a JSON integer (boolean, float, string, other) | `CollectorError`, operation `decode` |
+
+No pagination is implemented or attempted. A mismatch fails the company rather
+than letting a truncated board be recorded as a successful crawl.
+
 ## Documented provider guarantees
 
 Taken from the Greenhouse Job Board API documentation, consulted 2026-09-19.
@@ -153,7 +186,7 @@ See `tests/fixtures/greenhouse/README.md`.
 
 | Observation | Consequence for the MVP |
 |---|---|
-| `meta.total` equalled `len(jobs)` on every board, up to 882 jobs in one response | No pagination is implemented. A future mismatch between the two is a hard error, not a silent truncation. |
+| `meta.total` equalled `len(jobs)` on every board, up to 882 jobs in one response | No pagination is implemented. A future mismatch between the two is a hard error, not a silent truncation; the exact rules are in "Greenhouse board completeness". |
 | `first_published` present and non-null on 2,610/2,610 jobs | `source_published_at` is populated for Greenhouse. Newness is source-relative, not merely radar-relative. The field is nonetheless undocumented, so absence must normalize to null rather than fail. |
 | `departments`, `offices` and `content` are returned **only** when `content=true`, and the parameter is matched **literally**: `content=1`, `content=false` and `content=bogus` all omit them | The collector must send the exact string `true`. |
 | `departments[]` carries a hierarchy (`parent_id`, `child_ids`). **2,608 of 2,610 jobs had exactly one entry; 2 had none. More than one was never observed** | Empty is a real case and normalizes to null. Only `departments[0].name` is normalized; if several are ever returned, the first is taken. The full array stays in `raw_data`, and a second entry appearing later is evidence for revisiting the normalized representation. |
@@ -243,6 +276,39 @@ job's absence from a crawl of that company that **succeeded**. A failed
 company crawl must never affect the `is_active` or `last_seen_at` of that
 company's existing jobs.
 
+A company whose every posting was `invalid` still records `success`
+(ADR-0016). Future deactivation must not treat such a crawl, or one whose
+completeness was not verified, as proof that the company's jobs disappeared
+(ADR-0004 addendum).
+
+## Ingestion run
+
+Approved 2026-11-10. `IngestionService.run()` performs, in order:
+
+1. **Reconcile configuration** in its own transaction (see "Configuration").
+2. **Start the run**: take `observed_at` once from the injected clock, open the
+   `crawl_runs` row in the `running` state, and commit it.
+3. **Crawl each enabled company sequentially**: fetch through the collector
+   registered for its source, then normalize and upsert each posting
+   occurrence in response order inside the company's transaction. A successful
+   company's result row is written **in that same transaction**, so its jobs
+   and its success record commit or roll back together.
+4. **Finish the run**: derive the status, write aggregated counters, commit,
+   and emit the completion log record.
+
+One `observed_at` is used for every job in the run. Per-company `started_at`
+and `finished_at` are read from the same injected `Clock` as timing metadata
+only; they are not observation times and do not change the run's single
+`observed_at`.
+
+A run over zero enabled companies still reconciles, opens and finishes its
+run row, and records `success` with zero counters.
+
+The service is source-agnostic: it depends on the `Collector` and
+`Normalizer` protocols and on the domain model only. Source-specific wiring
+belongs to the caller. There are no retries (ADR-0016) and no concurrent
+company processing (ADR-0009) in the MVP.
+
 ## Failure isolation
 
 Failure while fetching or processing one configured company must not
@@ -251,9 +317,10 @@ prevent other configured companies from being processed.
 The failure must be logged with enough context to identify:
 
 - source
-- company
+- board_token
+- display_name
 - operation
-- error
+- error (safe details only; see "Persistence errors")
 
 A company failure has no effect on the stored rows of that company. Its jobs
 are neither touched, restamped, nor deactivated.
@@ -261,6 +328,40 @@ are neither touched, restamped, nor deactivated.
 Every outbound HTTP request must have a bounded timeout. Failure isolation
 that relies only on exception handling is insufficient, because a hung
 request would stall the entire run.
+
+### Failure classes (approved 2026-11-10)
+
+| Failure | Effect |
+|---|---|
+| `NormalizationError` for one posting | That occurrence counts as `invalid`; the company continues and can still succeed |
+| `CollectorError` | The company fails; no job is written for it |
+| `PersistenceError` while processing the company | The company transaction rolls back; the company fails |
+| Recording a failed company's result also fails | **The run aborts**: no further companies are attempted, the run is not finished, and the error propagates. The run row may remain `running` |
+| Any other exception (a programming error) | Propagates and crashes the run; it is never recorded as a company failure |
+
+A failed company's result is recorded in a **new** transaction, after its
+own transaction has rolled back, with status `failed`, zero counters, and its
+error type and safe message.
+
+### Persistence errors
+
+The persistence adapter translates every SQLAlchemy failure into
+`PersistenceError` before it reaches the ingestion service. SQLAlchemy and
+driver exception text can contain SQL, bound parameters and row content,
+including `raw_data`; none of it may reach a log record or a persisted error
+message. Therefore:
+
+- The safe message is built only from the exception category (the
+  SQLAlchemy exception class name, such as `IntegrityError` or
+  `OperationalError`) and, when the driver provides one, the SQLSTATE code.
+  It is bounded in length.
+- No part of the original exception's message is used, **including its first
+  line**, which can itself contain bound values or row content.
+- The original exception is not chained into the raised `PersistenceError`
+  and is not logged in normal company-failure reporting.
+- `crawl_company_results.error_type` records the Job Radar error class
+  (`CollectorError` or `PersistenceError`) and `error_message` only its
+  sanitized safe message, never the original exception text.
 
 ## Crawl outcome model
 
@@ -275,10 +376,15 @@ Each crawl run records a status:
 A run over zero enabled companies is `success`.
 
 Each company within a run records its own status (`success` or `failed`), its
-counters, and, on failure, the error type and message.
+counters, and, on failure, the error type and message. A failed company
+records **zero** counters, because none of its writes were committed; what it
+had fetched or attempted before failing appears only in its log record.
 
 These records are the substrate for future deactivation, which needs to know
 which companies were crawled successfully.
+
+A run interrupted by an abort or a crash may remain in the `running` state.
+No recovery mechanism exists yet (ADR-0008 addendum).
 
 ## Run reporting
 
@@ -286,13 +392,40 @@ A run reports the following counters, per company and aggregated:
 
 | Counter | Meaning |
 |---|---|
-| fetched | jobs returned by the source |
-| new | jobs inserted for the first time |
-| existing | jobs already present and re-observed |
+| fetched | posting occurrences returned by the source |
+| new | occurrences whose upsert inserted the job |
+| existing | occurrences whose upsert re-observed a job already stored for this company |
 | updated | subset of `existing` whose source-derived fields changed |
-| invalid | payload entries rejected during normalization |
+| invalid | occurrences rejected during normalization, or whose identity belongs to a different company |
 
 `fetched = new + existing + invalid` must hold per company.
+
+Counting rules (approved 2026-11-10):
+
+- Counters count **posting occurrences**, not distinct ids. Each fetched
+  occurrence contributes to exactly one of `new`, `existing` or `invalid`.
+- `updated` is a subset of `existing`; `updated <= existing` always holds.
+- A `COMPANY_CONFLICT` upsert outcome (ADR-0014, ADR-0015) counts as
+  `invalid`, never as `existing`, leaves the stored row unchanged, and emits a
+  structured `ERROR` log record carrying both company ids. The company can
+  still succeed. Conflicts are distinguishable from normalization rejections
+  only in the logs.
+- **Duplicate ids within one response** are not deduplicated. Occurrences are
+  processed in response order under the normal upsert rules, all with the
+  run's single `observed_at`:
+  - the first occurrence counts by what it finds stored (`new`, or
+    `existing`/`updated`);
+  - a later identical occurrence counts as `existing`;
+  - a later changed occurrence counts as `existing` and `updated`, and its
+    content replaces the earlier one's;
+  - an occurrence that fails normalization counts as `invalid` and changes
+    nothing.
+
+  The last successfully normalized occurrence therefore determines the stored
+  content. A job new to this run that appears twice counts once as `new` and
+  once as `existing`.
+- A failed company records zero for every counter (see "Crawl outcome
+  model").
 
 **Process exit code is intentionally unresolved.** The MVP exits 0 for
 `success`, `partial_success` and `failed` alike. Only an unhandled crash
@@ -302,12 +435,21 @@ decision to be taken when a scheduler consumes the exit code.
 ## Structured logging
 
 Logs are emitted as structured records. Every failure record carries at
-minimum `source`, `company`, `operation` and `error`. Every run emits a
-completion record carrying the run status and aggregated counters.
+minimum `source`, `board_token`, `display_name`, `operation` and safe `error`
+details; posting-level records also carry `source_job_id` when it is known.
+Every run emits a completion record carrying the run status and aggregated
+counters.
+
+Domain errors expose part of this context through `log_context()`
+(`CollectorError` reports the board token under `company`;
+`NormalizationError` carries no company at all). The ingestion service adds
+the missing company fields when it logs them.
 
 ## MVP Acceptance Criteria
 
-Given a configured Greenhouse board containing N jobs:
+Given a configured Greenhouse board containing N jobs with distinct ids, all
+of which normalize successfully (duplicates and invalid postings follow
+"Run reporting"):
 
 ### First run
 
@@ -341,7 +483,9 @@ Given two configured boards where the first fails and the second returns M jobs:
 - the second board's M jobs are persisted
 - run status = partial_success
 - the failing company's existing rows are byte-for-byte unchanged
-- one structured failure record is emitted with source, company, operation, error
+- one structured failure record is emitted with source, board_token,
+  display_name, operation and safe error details
+- the failing company's result row records `failed` with zero counters
 
 ## Non-goals
 

@@ -32,3 +32,22 @@ persisted now (ADR-0008), even though nothing consumes them yet.
 - The crawl outcome tables are built ahead of their consumer. This is accepted
   cost: the failure mode they prevent produces plausible-looking wrong data,
   which is far more expensive to detect and repair than to prevent.
+
+## Addendum, 2026-11-10: success is not proof of absence
+
+Recorded while specifying the ingestion service. Nothing here introduces
+deactivation; it constrains whoever does.
+
+- Under ADR-0016 a company whose every posting fails normalization still
+  records `success`, with zero `new` and zero `existing`. A provider schema
+  change could produce exactly that. Future deactivation must **not** treat
+  such a crawl as proof that the company's jobs disappeared; it needs an
+  explicit guard, for example requiring the crawl to have persisted at least
+  one valid observation. That guard is an illustration, not an adopted
+  policy; choosing it is part of the deactivation decision.
+- A Greenhouse response without `meta.total` is accepted with its
+  completeness **unverified** (ADR-0016 addendum). Deactivation must account
+  for that, too.
+- Disabling a board, or removing it from configuration, stops it being
+  crawled but does not touch its stored jobs. That is not deactivation, and
+  must not be implemented as such.

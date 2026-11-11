@@ -41,3 +41,22 @@ should be non-zero is deferred until a scheduler actually consumes the code.
 - Future deactivation has the successful-crawl record it requires.
 - Outcome rows accumulate per run per company and will need a retention policy
   eventually. Not an MVP concern.
+
+## Addendum, 2026-11-10: how outcomes are written
+
+Approved ahead of implementing the ingestion service. The statuses above are
+unchanged.
+
+- The run row is created in the `running` state and committed before the
+  first company, and finished after the last.
+- A **successful** company's result is written in the same transaction as its
+  job writes, so a success record exists exactly when those writes committed.
+- A **failed** company's result is written in a new transaction after its own
+  transaction rolled back, with zero counters and its error type and safe
+  message. What it fetched before failing appears only in the log.
+- A run over zero enabled companies records `success` with zero counters.
+- **An interrupted run may remain `running`.** If persisting a failed
+  company's result itself fails, the run aborts without being finished; a
+  crash does the same. No `interrupted` status and no recovery mechanism are
+  introduced yet. Consumers of `crawl_runs` must not assume every run reaches
+  a terminal status.

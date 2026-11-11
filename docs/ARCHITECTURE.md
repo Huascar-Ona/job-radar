@@ -174,7 +174,7 @@ error each raises says which half failed.
 |---|---|---|
 | Knows | transport, provider endpoints | provider field semantics, the normalized contract |
 | Never knows | Job Radar domain semantics | HTTP, persistence |
-| Does | build the URL, GET with a bounded timeout, classify status, decode JSON, verify the response envelope, return provider payloads | translate one provider posting into a `NormalizedJob` |
+| Does | build the URL, GET with a bounded timeout, classify status, decode JSON, verify the response envelope (including its completeness count, where the provider reports one), return provider payloads | translate one provider posting into a `NormalizedJob` |
 | Never does | build `NormalizedJob`, decide observation times, write to the database, filter postings | perform I/O of any kind |
 | Raises | `CollectorError` — the provider did not deliver a usable board | `NormalizationError` — the board arrived but one posting cannot be converted |
 
@@ -183,9 +183,11 @@ response is a Job Board API response at all, not whether any posting is valid.
 
 **A malformed posting must not invalidate the rest of the board.** One
 `NormalizationError` counts as `invalid` for that company; the company still
-succeeds. Only a `CollectorError` fails it. This is what makes the `invalid`
-counter reachable, and it constrains the ingestion service: it must catch
-normalization failures per posting rather than per board.
+succeeds. Of the two halves, only a `CollectorError` fails it; outside them, a
+recoverable `PersistenceError` also does (ADR-0016 addendum). This is what
+makes the `invalid` counter reachable, and it constrains the ingestion
+service: it must catch normalization failures per posting rather than per
+board.
 
 Unknown provider fields are tolerated at the collector boundary — providers add
 fields — while `NormalizedJob` forbids extras. Tolerant at the edge, strict in
@@ -247,6 +249,22 @@ be undone.
 
 The run row is opened before the first company and closed after the last, so
 it is committed independently of any single company's transaction.
+
+Transactions within one run (approved 2026-11-10; SPEC, "Ingestion run"):
+
+1. Configuration reconciliation.
+2. Opening the run row in the `running` state.
+3. One per company: its job writes and, on success, its result row. On
+   failure it rolls back, and the failed result is written in a further,
+   separate transaction.
+4. Finishing the run row.
+
+If the separate failure-record transaction also fails, the run aborts and may
+remain `running`.
+
+The persistence adapter, not the ingestion service, translates SQLAlchemy
+failures into `PersistenceError`, whose message never contains SQL, bound
+parameters, row content or driver message text (ADR-0016 addendum).
 
 ## Testing boundaries
 

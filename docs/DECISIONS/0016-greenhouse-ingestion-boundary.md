@@ -89,3 +89,74 @@ optimization that is known to work rather than assumed to.
   before adding one.
 - Adding a retry policy later needs no structural change: the error classes
   already distinguish retryable from not.
+
+## Addendum, 2026-11-10: completeness, persistence errors and counting
+
+Approved ahead of implementing the ingestion service. The decisions above are
+unchanged; this extends the taxonomy. SPEC.md holds the operational detail
+("Greenhouse board completeness", "Ingestion run", "Failure isolation",
+"Run reporting").
+
+### `meta.total` completeness check (collector)
+
+The envelope check gains one rule. `meta.total` is observed on every sampled
+board but is not documented, so:
+
+- `meta` absent or null, or `meta.total` absent or null: accepted, and
+  completeness is **not verified** for that response.
+- `meta` present and non-null but not a JSON object: a malformed envelope,
+  `CollectorError` with operation `decode`.
+- `meta.total` present: it must be a strict JSON integer (not a boolean,
+  float or string) and must equal `len(jobs)`. A mismatch or a malformed
+  value is a `CollectorError` with operation `decode`.
+
+No pagination is introduced. A board that disagrees with its own count is a
+failed crawl, never a silently truncated successful one: recording a
+truncated board as `success` would later look like jobs disappearing
+(ADR-0004).
+
+### `PersistenceError`
+
+A third error class: the database could not complete a write or read the
+ingestion service needed. The persistence adapter translates every
+SQLAlchemy failure into it before it reaches the service, which therefore
+never depends on SQLAlchemy.
+
+SQLAlchemy and driver exception text can carry SQL statements, bound
+parameters and row content, `raw_data` included, and **even the first line
+of a driver message can contain bound values or row data**. The safe message
+is therefore built only from the exception category (the SQLAlchemy class
+name) and, when available, the SQLSTATE code, and is bounded in length. No
+text from the original exception is used, the original is not chained, and it
+is not logged in normal company-failure reporting. A failed company's result
+records the class name (`CollectorError` or `PersistenceError`) as
+`error_type` and only the sanitized safe message as `error_message`.
+
+### Failure classes during a run
+
+The Decision's "only a `CollectorError` fails it" contrasts the collector with
+the normalizer. Across the whole run, a recoverable `PersistenceError` fails a
+company too:
+
+| Failure | Classification |
+|---|---|
+| `NormalizationError` | One `invalid` occurrence; the company continues |
+| `CollectorError` | Recoverable company failure |
+| `PersistenceError` while processing a company | Recoverable company failure, provided its failure record can be persisted in a new transaction |
+| Persisting that failure record also fails | The run aborts and may remain `running` (ADR-0008 addendum) |
+| Any other exception | A programming error: it propagates and is never recorded as a company failure |
+
+### Counting
+
+- Each fetched posting occurrence counts exactly once as `new`, `existing` or
+  `invalid`; `updated` is a subset of `existing`.
+- `COMPANY_CONFLICT` counts as `invalid`, never `existing`, with a structured
+  `ERROR` log record. It keeps `fetched = new + existing + invalid` true
+  without a new counter or schema change; the cost is that conflicts are
+  distinguishable from normalization rejections only in the logs.
+- Duplicate ids within one response are not deduplicated; they are processed
+  in response order and the last successfully normalized occurrence
+  determines the stored content.
+- A board whose every posting is `invalid` still **succeeds**, as decided
+  above. The risk this creates for future deactivation is recorded in the
+  ADR-0004 addendum.
