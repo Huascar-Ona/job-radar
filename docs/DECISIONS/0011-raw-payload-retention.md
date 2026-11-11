@@ -41,3 +41,26 @@ not introduced.
 - The hash must cover exactly the normalized source-derived fields. If it is
   computed over the raw payload instead, volatile fields unrelated to the job
   would defeat the guard.
+
+## Erratum, 2026-11-11
+
+Two statements above do not match the implemented upsert
+(`src/job_radar/persistence/job_repository.py`). The decision itself, keeping
+only the latest payload and not rewriting it when nothing changed, holds.
+
+1. **"Hash unchanged: only `last_seen_at` is written"** and **"one narrow
+   timestamp write per job per crawl"**. The implemented conflict branch also
+   writes, for an unchanged job, `is_active`, `updated_at` and
+   `previous_content_hash`, and rewrites the other source-derived fields and
+   `content_hash` with identical values. What is avoided is replacing the
+   stored ~10 KB `raw_data` value: it is kept as it is. The row is still
+   updated, so each crawl still produces a new row version per job. SPEC,
+   "Update semantics on re-observation", lists the columns.
+2. **"The hash must cover exactly the normalized source-derived fields. If it
+   is computed over the raw payload instead, volatile fields unrelated to the
+   job would defeat the guard."** The implemented hash (`HASHED_FIELDS`)
+   covers the normalized source-derived fields **and `raw_data`**. A change to
+   any payload field, including one Job Radar does not normalize, therefore
+   counts as `updated` and replaces `raw_data`. Whether the hash should
+   exclude `raw_data` is an open question; answering it would change the
+   decision, so it needs its own ADR rather than an erratum.

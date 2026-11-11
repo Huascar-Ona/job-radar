@@ -18,34 +18,43 @@ an HTTP API is actually needed.
 ## Initial Architecture
 
 ```
-                 CLI (entry point)
-                        |
-                        v
-                IngestionService
-        (orchestration, failure isolation,
-              crawl run accounting)
-                        |
-         +--------------+--------------+
-         |                             |
-         v                             v
-  BoardConfig                   CrawlRunRepository
- (enabled companies)          (run + per-company outcome)
-         |
-         v
-  GreenhouseCollector  --- httpx, bounded timeout --->  Greenhouse Board API
-         |
-         v
-  Greenhouse payload (validated by Pydantic source schema)
-         |
-         v
-  GreenhouseNormalizer
-         |
-         v
-     NormalizedJob  (Pydantic, source-agnostic)
-         |
-         v
-     JobRepository  --- INSERT ... ON CONFLICT DO UPDATE --->  PostgreSQL
+            CLI (entry point; the ingestion command is planned, Step 4D-4)
+                                  |
+                                  v
+                          IngestionService
+      (orchestration, failure isolation, crawl run accounting)
+           |                      |                            |
+           v                      v                            v
+     BoardsConfig        Collector, Normalizer           StoreFactory
+  (config/boards.yml)    (per source, injected)       (ingestion ports)
+                                  |                            |
+                                  v                            v
+                         GreenhouseCollector        SqlAlchemyStoreFactory
+          httpx, bounded timeout -> Greenhouse     (one transaction per use;
+                                  |                 SQLAlchemy failures become
+                                  v                 PersistenceError)
+                         Greenhouse payload                    |
+                  (validated by Pydantic source schema)        v
+                                  |                    CompanyRepository
+                                  v                    JobRepository ----+
+                        GreenhouseNormalizer           CrawlRepository   |
+                                  |                                      |
+                                  v                                      v
+                  NormalizedJob (Pydantic, source-agnostic)    PostgreSQL
+                  passed by the service to JobRepository.upsert
+                  (INSERT ... ON CONFLICT DO UPDATE)
 ```
+
+Where each part lives:
+
+| Component | Module |
+|---|---|
+| `IngestionService`, crawl summaries | `job_radar.ingestion.service`, `job_radar.ingestion.summary` |
+| `StoreFactory` and the store protocols | `job_radar.ingestion.ports` |
+| `SqlAlchemyStoreFactory` | `job_radar.persistence.ingestion_store` |
+| `CompanyRepository`, `JobRepository`, `CrawlRepository` | `job_radar.persistence.*_repository` |
+| `GreenhouseCollector`, `GreenhouseNormalizer` | `job_radar.collectors.greenhouse` |
+| `BoardsConfig` | `job_radar.config.boards` |
 
 ## Architectural Boundary
 
@@ -98,18 +107,24 @@ requires `UNIQUE (id, source)` on `companies`. RESTRICT applies on both delete
 and update, so a company with jobs can neither be removed nor have its source
 changed underneath them. Job identity remains `(source, source_job_id)`.
 
-`created_at` and `updated_at` are maintained by the ORM, not by a database
-trigger. A raw SQL `UPDATE` therefore does not refresh `updated_at`. This is
-accepted deliberately: every production write goes through a repository, and a
+`created_at` and `updated_at` on `companies` and `jobs` are not maintained by
+a database trigger. An insert takes their server default, `now()`, and every
+repository statement that updates one of those rows assigns
+`updated_at = now()` explicitly in its SQL. A raw SQL `UPDATE` outside a
+repository therefore does not refresh `updated_at`. This is accepted
+deliberately: every production write goes through a repository, and a
 trigger would add schema surface that is invisible in the models and easy to
 forget when migrating. These columns are operational metadata for debugging,
 never the basis of any invariant — the observation history that matters lives
 in `first_seen_at` and `last_seen_at`, which are written explicitly.
 
-Each job row carries a `content_hash` over its source-derived fields. When the
-hash is unchanged the conflict branch writes only `last_seen_at`, so a stable
-board does not rewrite a ~10 KB `raw_data` payload per job per crawl
-(ADR-0011).
+Each job row carries a `content_hash` over its source-derived fields,
+`raw_data` included. When the hash is unchanged, the conflict branch keeps the
+stored ~10 KB `raw_data` value instead of replacing it (ADR-0011). The row is
+still updated: `last_seen_at`, `is_active`, `updated_at` and
+`previous_content_hash` are written, and the other source-derived fields are
+rewritten with identical values. SPEC, "Update semantics on re-observation",
+has the full list.
 
 ## Timestamps
 
@@ -278,8 +293,9 @@ parameters, row content or driver message text (ADR-0016 addendum).
 - Anything asserting database behavior runs against real PostgreSQL. SQLite is
   not an acceptable substitute because the design depends on `ON CONFLICT`,
   `jsonb` and `timestamptz` semantics (ADR-0010).
-- Acceptance tests drive the CLI end to end with stubbed HTTP and a real
-  database.
+- Acceptance tests will drive the CLI end to end with stubbed HTTP and a real
+  database. None exist yet; they are planned with the ingestion command
+  (Step 4D-4).
 
 ## Current Scope
 

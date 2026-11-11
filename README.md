@@ -11,9 +11,9 @@ The project emphasizes reliable data ingestion, explicit domain boundaries, data
 **Version:** 0.1.0  
 **Stage:** Active development
 
-The current implementation provides foundational domain, persistence, migration, and Greenhouse collection components.
+The current implementation provides the domain model, PostgreSQL persistence and migrations, the Greenhouse collector and normalizer, and an ingestion service that orchestrates a crawl run: it reconciles configured boards, crawls each enabled company in its own transaction, isolates per-company failures and records crawl outcomes.
 
-The Greenhouse collector has been implemented, while the end-to-end ingestion CLI is still under development. The current CLI displays the installed application version.
+The ingestion service is not yet executable from the command line. The ingestion CLI command is the next step; the current CLI displays the installed application version.
 
 ## Technology Stack
 
@@ -34,7 +34,8 @@ The Greenhouse collector has been implemented, while the end-to-end ingestion CL
 The application is organized around explicit engineering boundaries:
 
 - **Domain:** Job normalization, ingestion contracts, crawl outcomes, and domain errors.
-- **Collectors:** Source-specific data retrieval, currently focused on the Greenhouse public Job Board API.
+- **Collectors:** Source-specific data retrieval and normalization, currently focused on the Greenhouse public Job Board API.
+- **Ingestion:** Source-agnostic orchestration of a crawl run: configuration reconciliation, per-company transactions, failure isolation and crawl outcome recording.
 - **Persistence:** SQLAlchemy repositories, PostgreSQL models, and transactional data operations.
 - **Configuration:** Environment-based settings and version-controlled job board configuration.
 - **Migrations:** Schema evolution through Alembic.
@@ -110,13 +111,9 @@ The goal is to use AI assistance while maintaining code quality, architectural c
 
 Job Radar uses a reproducible verification workflow to maintain code quality and architectural consistency throughout AI-assisted development.
 
-### Current Verification Results
+### Verification Gates
 
-- **353 automated tests passing**, including unit, integration, database migration, and concurrency tests.
-- **51 source files** successfully checked with mypy in strict mode.
-- **79 files** validated by Ruff's formatter.
-- **Ruff linting:** all checks passed.
-- **PostgreSQL integration tests:** executed against a real database instance.
+The test suite includes unit, integration, database migration, and concurrency tests. PostgreSQL integration tests run against a real database instance.
 
 All quality gates can be executed through a single command:
 
@@ -126,7 +123,7 @@ make check
 
 This workflow combines static analysis, formatting validation, strict type checking, and automated tests to provide deterministic feedback during development with Claude Code.
 
-These results reflect the latest locally executed verification run, not a continuous integration service.
+Before a change is considered ready, the `verify-change` skill ([`.claude/skills/verify-change/`](.claude/skills/verify-change/)) runs each gate separately, asks before every integration run, reviews documentation impact, and reports what was and was not verified. Results come from those runs on a local machine; there is no continuous integration service yet, so this README does not quote test counts.
 
 ## Roadmap
 
@@ -152,14 +149,14 @@ The roadmap represents planned development directions rather than committed deli
 
 - [x] Implement the Greenhouse job board collector
 - [x] Introduce configurable job board definitions
-- [ ] Connect collectors to the persistence layer through an executable ingestion pipeline
+- [ ] Connect collectors to the persistence layer through an executable ingestion pipeline (in progress: the ingestion service is implemented and unit-tested; the executable CLI command is pending)
 - [ ] Implement CLI commands for manual collection and ingestion
 - [ ] Add Lever and Ashby job board integrations
 - [ ] Implement configurable crawling schedules
 - [ ] Add retry policies with exponential backoff and jitter
 - [ ] Introduce rate limiting and concurrency controls
-- [ ] Extend handling of partial failures and degraded API responses
-- [ ] Implement structured logging and crawl diagnostics
+- [ ] Extend handling of partial failures and degraded API responses (partial: per-company failure isolation, `partial_success` runs and a board completeness check are implemented)
+- [ ] Implement structured logging and crawl diagnostics (partial: structured log fields and persisted per-company crawl results are implemented; log output configuration is pending)
 - [ ] Add crawl execution metrics and operational reporting
 - [ ] Support incremental collection and checkpoint recovery
 

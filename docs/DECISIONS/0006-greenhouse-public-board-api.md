@@ -86,3 +86,16 @@ public Board API with `content=true` is unchanged. What the documentation adds:
 A second sample on the same date covered six boards and 2,610 postings; the
 full table is in SPEC.md. One earlier claim did not survive it: `departments`
 can be empty, so "every sampled job had exactly one entry" is no longer true.
+
+## Erratum, 2026-11-11
+
+The Context and Consequences above say that `description` and `department`
+are "required normalized fields". They are not. Both are nullable in the
+normalized contract: SPEC's normalized observation table marks them
+nullable, `NormalizedJob` declares both as optional text
+(`src/job_radar/domain/job.py`), and the normalizer maps an absent or empty
+source value to null.
+
+The decision is unaffected. `content=true` is still required, because without
+it Greenhouse omits `content`, `departments` and `offices`, and those fields
+would then be null for every job rather than only when the source lacks them.

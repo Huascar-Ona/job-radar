@@ -150,6 +150,13 @@ enforced:
 No pagination is implemented or attempted. A mismatch fails the company rather
 than letting a truncated board be recorded as a successful crawl.
 
+**Known design debt (recorded 2026-11-11).** Whether a response's
+completeness was verified is not recorded anywhere. The collector returns the
+postings alone, and neither the logs nor `crawl_company_results` distinguish a
+verified board from an unverified one. The ADR-0004 addendum requires future
+deactivation to account for unverified completeness, so this must be resolved
+before deactivation is introduced. Nothing tracks it yet.
+
 ## Documented provider guarantees
 
 Taken from the Greenhouse Job Board API documentation, consulted 2026-09-19.
@@ -229,7 +236,7 @@ Job Radar job for the MVP. Cross-listing deduplication is out of scope.
 
 ## Update semantics on re-observation
 
-When an already-known job is observed again:
+When an already-known job is observed again by the company it belongs to:
 
 - `first_seen_at` is never modified.
 - `last_seen_at` is set to the observation's `observed_at`.
@@ -239,7 +246,13 @@ When an already-known job is observed again:
   changed, so unchanged jobs do not rewrite a ~10 KB payload on every crawl
   (ADR-0011).
 - A job whose `content_hash` is unchanged counts as `existing` but not
-  `updated`, and only its `last_seen_at` is written.
+  `updated`. Its row is still updated: `last_seen_at`, `is_active`,
+  `updated_at` (the transaction time) and `previous_content_hash` are written,
+  and the source-derived fields and `content_hash` are rewritten with
+  identical values. Only `raw_data` keeps its stored value rather than being
+  replaced.
+- `previous_content_hash` records the hash the row held before this update.
+  The upsert classifies its own outcome from it (ADR-0015).
 
 ## Timestamps
 

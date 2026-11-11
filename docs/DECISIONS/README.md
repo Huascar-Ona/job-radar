@@ -7,6 +7,13 @@ Status is one of `Proposed`, `Accepted`, `Superseded by ADR-NNNN`.
 Records are immutable once accepted. A changed decision is a new ADR that
 supersedes the old one; the old file stays and is marked superseded.
 
+One exception: a **factual error** in an accepted record, one that leaves the
+decision itself unchanged, is corrected by appending a dated
+`## Erratum, YYYY-MM-DD` section. The original text stays as written; the
+erratum quotes what was wrong and states what is true, with the evidence. A
+correction that changes what was decided is not an erratum; it needs a new
+ADR.
+
 | ADR | Title | Status |
 |---|---|---|
 | [0001](0001-technology-stack.md) | Technology stack | Accepted |
