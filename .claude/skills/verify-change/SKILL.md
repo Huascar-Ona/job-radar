@@ -1,6 +1,6 @@
 ---
 name: verify-change
-description: Verify the current Job Radar working-tree change with the repository's existing gates (Ruff lint, Ruff format check, mypy strict, unit tests, PostgreSQL integration tests) and report each check as PASS/FAIL/BLOCKED/SKIPPED with an overall PASS/FAIL/BLOCKED/PARTIAL. Use before claiming a change is done or verified, before committing, or when asked to verify, run the checks, or run make check.
+description: Verify the current Job Radar working-tree change with the repository's existing gates (Ruff lint, Ruff format check, mypy strict, unit tests, PostgreSQL integration tests) plus a read-only documentation impact review (DOC-IMPACT), and report each check as PASS/FAIL/BLOCKED/SKIPPED with an overall PASS/FAIL/BLOCKED/PARTIAL. Use before claiming a change is done or verified, before committing, or when asked to verify, run the checks, or run make check.
 argument-hint: "[integration=ask|no]"
 ---
 
@@ -21,8 +21,9 @@ agent, not enforced by the harness.
    `git commit`, `git stash`, `git checkout` or `git restore`. If something
    needs fixing, put it in the report and stop.
 2. **Run only the commands named in this file.** They are the Makefile's own
-   recipes, plus read-only inspection. Do not invent checks. Do not narrow a
-   suite with `-k`, `-x`, `--lf`, `--deselect` or paths.
+   recipes, plus read-only inspection, including the read-only review commands
+   in section 5a. Do not invent checks. Do not narrow a suite with `-k`, `-x`,
+   `--lf`, `--deselect` or paths.
 3. **Never start or stop Docker.** Do not run `make up`, `make down` or any
    `docker compose up/down/start/stop`. If PostgreSQL is unavailable, report
    BLOCKED and tell the user they can run `! make up` themselves.
@@ -70,10 +71,14 @@ path you're unsure about.
 
 Required checks:
 
-| Scope | LINT | FORMAT | TYPECHECK | UNIT | INTEGRATION |
-|---|---|---|---|---|---|
-| Any code-affecting path, or a clean tree | required | required | required | required | required |
-| Only docs/harness paths | required | required | required | required | not required |
+| Scope | LINT | FORMAT | TYPECHECK | UNIT | INTEGRATION | DOC-IMPACT |
+|---|---|---|---|---|---|---|
+| Any code-affecting path | required | required | required | required | required | required |
+| Only docs/harness paths | required | required | required | required | not required | required |
+| Clean tree | required | required | required | required | required | not required |
+
+A clean tree has no change to review, so DOC-IMPACT is SKIPPED there with
+reason "no working-tree change". Reviewing a commit range is out of scope.
 
 Flag these as higher-risk scope in the report:
 
@@ -244,6 +249,75 @@ How to read pytest results:
 These caches are git-ignored and may be written: `.ruff_cache`,
 `.mypy_cache`, `.pytest_cache`, `__pycache__`.
 
+## 5a. Documentation impact (DOC-IMPACT)
+
+Check that the documentation still describes the changed tree, without
+requiring edits it does not need. This is **agent judgment, not a
+deterministic check**: say so in the report, and never claim a document is
+consistent unless you read the relevant section.
+
+Never edit documentation here (hard rule 1). A needed update is a finding.
+
+Only these read-only commands, besides reading files:
+
+```
+git diff HEAD -- <path>
+git show HEAD:<path>
+grep -rn -- '<term>' docs README.md CLAUDE.md .claude
+```
+
+### Steps
+
+1. **Changed paths.** Every path from section 1, tracked or untracked. Read
+   untracked files in full; `git diff HEAD` does not show them.
+2. **Candidate documents.** Take the rows that match a changed path. Then
+   search the documents for terms from the change: class, function and
+   constant names, error messages, operation names, status values, commands.
+   Record the terms you searched for.
+
+   | Changed path | Review at least |
+   |---|---|
+   | `src/job_radar/collectors/**` | SPEC: Greenhouse field mapping, completeness, Safe error messages. ARCHITECTURE: Collector and normalizer responsibilities. ADR-0006, ADR-0016 |
+   | `src/job_radar/persistence/**`, `migrations/**` | SPEC: Idempotency, Update semantics, stored columns. ARCHITECTURE: Persistence, Transaction ownership. ADR-0002, ADR-0011, ADR-0013, ADR-0015 |
+   | `src/job_radar/ingestion/**` | SPEC: Ingestion run through Structured logging. ARCHITECTURE: diagram, Reliability, Transaction ownership. ADR-0004, ADR-0008, ADR-0016 |
+   | `src/job_radar/domain/**` | SPEC: observation fields, Timestamps. ARCHITECTURE: Timestamps. ADR-0003 |
+   | `config/**`, `src/job_radar/settings.py` | SPEC: Configuration. ADR-0012. README: Getting Started |
+   | `Makefile`, `pyproject.toml`, `docker-compose.yml`, `.env.example` | README: Getting Started, Quality Checks. CLAUDE.md. This skill |
+   | `.claude/**` | CLAUDE.md. `docs/ai-engineering/TOOL-RADAR.md` |
+   | `tests/**` | ARCHITECTURE: Testing boundaries, only if a test layer changes |
+   | A capability completed or scope changed | README: Project Status, Roadmap. CLAUDE.md: Current scope |
+   | A changed document | That document, against the code it describes |
+
+3. **Verdict per document.** Read the relevant sections, then give exactly one:
+
+   | Verdict | Meaning |
+   |---|---|
+   | `updated` | Changed in this tree, and consistent with the code |
+   | `unchanged-accurate` | Not changed, still accurate; give the reason |
+   | `contradiction-introduced` | Contradicts the changed tree, and was accurate at HEAD |
+   | `debt` | Already inaccurate at HEAD, for reasons this change does not touch |
+   | `cannot-evaluate` | The claim cannot be checked from the repository; give the reason |
+
+   To tell `contradiction-introduced` from `debt`, compare against HEAD with
+   `git show HEAD:<path>`: of the document, and of the code it describes. A
+   changed document that contradicts the code is `contradiction-introduced`,
+   even if the code did not change.
+
+   A contradiction must be demonstrable: quote the document and point at the
+   code, test or file it disagrees with. Missing detail is not a
+   contradiction unless the document claims the opposite.
+
+4. **Status.**
+   - **FAIL**: any `contradiction-introduced`.
+   - **BLOCKED**: otherwise, any `cannot-evaluate` on an important contract:
+     an invariant, identity, timestamps, a transaction or error contract, or a
+     safety rule.
+   - **PASS**: otherwise. Every candidate document is `updated`,
+     `unchanged-accurate` or `debt`.
+
+   `debt` never fails the gate. List it separately, so it stays visible
+   without blocking unrelated work.
+
 ## 6. Overall result
 
 Each check has exactly one status:
@@ -269,6 +343,9 @@ Apply these rules in order. The first match wins.
 
 Non-required checks that were SKIPPED never prevent PASS.
 
+DOC-IMPACT is one more check under these rules, with the same statuses. It
+changes no other check's status.
+
 ## 7. Confirm nothing changed
 
 Run `git status --porcelain=v1 --untracked-files=all` again and compare it with
@@ -280,5 +357,7 @@ Fill in `report-template.md` (in this directory) and print it.
 
 - Quote commands, exit codes and pytest/mypy summary lines verbatim.
 - Never reuse numbers from README.md or from an earlier run.
+- Label DOC-IMPACT as agent judgment. List every document and section
+  reviewed, the search terms, each verdict with its reason, and any debt.
 - If the overall result is not PASS, the first line of your reply must say
   what is unverified. Do not describe the change as "done" or "verified".

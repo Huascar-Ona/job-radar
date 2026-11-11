@@ -51,9 +51,12 @@ During implementation:
 
 Before finishing:
 
-1. Verify with the `verify-change` skill (`.claude/skills/verify-change/`).
-2. Verify acceptance criteria.
-3. Report what changed, the verification report, and any unresolved issues.
+1. Update documentation only where the change makes it inaccurate or
+   incomplete. Reviewing documentation impact is mandatory (verify-change,
+   DOC-IMPACT); editing documentation is not.
+2. Verify with the `verify-change` skill (`.claude/skills/verify-change/`).
+3. Verify acceptance criteria.
+4. Report what changed, the verification report, and any unresolved issues.
 
 ## Verification
 

@@ -23,6 +23,16 @@ Exit is the invoked command's code; for `make` targets add the tool's, e.g.
 | TYPECHECK | yes | | `make typecheck` | | |
 | UNIT | yes | | `make test-unit` | | |
 | INTEGRATION | <yes/no> | | `make test-integration` | | |
+| DOC-IMPACT | <yes/no> | | read-only review (section 5a) | n/a | <N documents reviewed> |
+
+### Documentation impact (agent judgment, not a deterministic check)
+| Document | Sections reviewed | Verdict | Reason |
+|---|---|---|---|
+| <path> | <sections> | <updated / unchanged-accurate / contradiction-introduced / debt / cannot-evaluate> | <why; for a contradiction, quote the document and name the code it disagrees with> |
+
+- Search terms: <terms searched in docs, README.md, CLAUDE.md, .claude>
+- Pre-existing documentation debt (does not fail the gate): <list, or "none found">
+- <"Not required: no working-tree change" for a clean tree>
 
 ### Failures
 <For each FAIL: failing node ids or rule codes and the first relevant output

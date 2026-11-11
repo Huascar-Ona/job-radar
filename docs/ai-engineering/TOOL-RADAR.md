@@ -29,8 +29,8 @@ What exists, what it costs, and what would have to be true before adopting it.
 ## CURRENT
 
 ### Claude Code
-**Category** coding agent · **Evidence** Repository-verified (all of Steps 0–3
-were produced with it)
+**Category** coding agent · **Evidence** Repository-verified (every step so
+far, 0 through 4D-3, was produced with it)
 
 Terminal-based coding agent: reads files, runs commands, edits code, iterates on
 tool output. Its value in this project came from closing the loop itself — run
@@ -65,7 +65,7 @@ signal the agent can act on unaided.
 **Guidance.** Build this first. Everything else on this radar assumes it exists.
 
 ### ADRs, SPEC.md, ARCHITECTURE.md
-**Category** durable context · **Evidence** Repository-verified (15 ADRs)
+**Category** durable context · **Evidence** Repository-verified (16 ADRs)
 
 Decision and specification records. Their agent-specific value is preserving
 reasoning that code cannot carry: rejected alternatives, evidence weighed, and
@@ -73,11 +73,14 @@ what is *not* guaranteed. ADR-0014 records that provider id uniqueness scope is
 undocumented across all three sources — unrecoverable from code.
 
 **Cost/risk.** Drift. A stale ADR is worse than none because it is trusted.
+`verify-change` now reviews documentation impact on every changed tree
+(DOC-IMPACT, H-003).
 
 ### Skills
 **Category** reusable procedure + context · **Evidence** Repository-verified
 (file exists); behavior only partially exercised · **Job Radar status** one
-skill, `verify-change` (H-002)
+skill, `verify-change` (H-002), extended with a documentation impact review
+(H-003)
 
 A packaged procedure with its context, loaded on demand when a task matches.
 Progressive disclosure: only the name and description are loaded every
@@ -98,6 +101,11 @@ procedure warned about.
 - Runs the existing Makefile gates one by one.
 - Refuses integration tests against an unverified database target, and asks
   before every integration run.
+- Reviews the documentation relevant to the change (DOC-IMPACT): which
+  documents were read, and whether each is updated, still accurate, newly
+  contradicted, or carries older debt. A contradiction the change introduces
+  fails the gate; older debt is reported without failing it. The verdicts are
+  agent judgment, not a deterministic check.
 - Reports PASS/FAIL/BLOCKED/SKIPPED per check and PASS/FAIL/BLOCKED/PARTIAL
   overall.
 
@@ -108,9 +116,19 @@ procedure drifts from reality. `verify-change` hard-codes test database names
 and destructive operations, so it re-reads them from `tests/` on each run
 rather than trusting its own text.
 
+**Symptom that justified DOC-IMPACT (H-003).** Nothing in the gate looked at
+documentation. An audit after Step 4D-3 found documents contradicting the code
+they describe, none of them caught by any check: SPEC, ARCHITECTURE and
+ADR-0011 said an unchanged job's upsert writes only `last_seen_at`; ADR-0006
+called two nullable fields required; README quoted test counts several steps
+old.
+
 **Not yet verified (radar step 5).** Whether it solved the measured problem
-has not been shown. Its behavior under PostgreSQL-available, failing-test and
-omitted-integration scenarios has not been exercised.
+has not been shown. Since H-002 it has been exercised in working sessions, but
+not in any way recorded in this repository: with PostgreSQL available and each
+integration run approved separately, and with integration omitted (reported
+PARTIAL). A failing check reported through the skill has not been exercised.
+DOC-IMPACT has not been exercised beyond the change that introduced it.
 
 ---
 
