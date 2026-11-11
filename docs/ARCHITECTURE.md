@@ -293,9 +293,16 @@ parameters, row content or driver message text (ADR-0016 addendum).
 - Anything asserting database behavior runs against real PostgreSQL. SQLite is
   not an acceptable substitute because the design depends on `ON CONFLICT`,
   `jsonb` and `timestamptz` semantics (ADR-0010).
+- The ingestion pipeline is tested end to end below the CLI: the real
+  `IngestionService`, collector, normalizer, store adapter, repositories and
+  PostgreSQL, with only HTTP stubbed (`tests/integration/test_ingestion_pipeline*.py`).
+  Most of these tests run inside one transaction that is always rolled back,
+  with the service's transactions as SAVEPOINTs within it; persistence
+  failures are injected by temporary PostgreSQL triggers created in that
+  transaction. Two durability tests commit for real, on identifiers no other
+  test uses, and delete exactly those rows afterwards.
 - Acceptance tests will drive the CLI end to end with stubbed HTTP and a real
-  database. None exist yet; they are planned with the ingestion command
-  (Step 4D-4).
+  database. None exist yet; they are planned with the ingestion command.
 
 ## Current Scope
 

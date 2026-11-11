@@ -152,6 +152,7 @@ Re-read the code each time; do not trust this file's description over it:
 ```
 grep -n "_DB = " tests/conftest.py
 grep -n "CREATE DATABASE\|DROP SCHEMA\|DROP TABLE" tests/support/database.py
+grep -n "CREATE FUNCTION\|CREATE TRIGGER\|DELETE FROM\|UPDATE companies" tests/conftest.py tests/support/pipeline.py tests/integration/test_ingestion_pipeline*.py
 ```
 
 When this skill was written, these were:
@@ -163,6 +164,15 @@ When this skill was written, these were:
 - `drop_all_tables` runs `DROP SCHEMA public CASCADE` in each test database
   at session start. Migration tests also upgrade, downgrade and drop tables.
   Concurrency tests commit rows.
+- Ingestion pipeline tests (`tests/integration/test_ingestion_pipeline*.py`)
+  run in `jobradar_schema_test` only, and assert that with
+  `current_database()` before writing. Most hold one transaction that is
+  always rolled back (`pipeline_connection` in `tests/conftest.py`): inside it
+  they disable every company, and the failure tests create temporary
+  functions and triggers (`install_failing_trigger` in
+  `tests/support/pipeline.py`). The two durability tests commit for real, but
+  only after checking that no company is enabled and that their identifiers
+  are unused, and then `DELETE` only the rows carrying those identifiers.
 - The configured database itself is used only by
   `tests/integration/test_database_connection.py`.
 

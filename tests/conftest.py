@@ -5,13 +5,15 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-from sqlalchemy import Connection, Engine
+from sqlalchemy import Connection, Engine, text
 from sqlalchemy.orm import Session
 
 from job_radar.persistence.session import create_database_engine
 from job_radar.settings import Settings
 from tests.support import database as db
 from tests.support.clock import FixedClock
+from tests.support.pipeline import SCHEMA_DB as PIPELINE_DB
+from tests.support.pipeline import assert_schema_test_database
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -100,5 +102,30 @@ def session(schema_engine: Engine) -> Iterator[Session]:
         yield orm_session
     finally:
         orm_session.close()
+        transaction.rollback()
+        connection.close()
+
+
+@pytest.fixture
+def pipeline_connection(schema_engine: Engine) -> Iterator[Connection]:
+    """One connection for a whole pipeline test, always rolled back.
+
+    The ingestion service's transactions join it as SAVEPOINTs
+    (tests/support/pipeline.py), so they commit and roll back as they would
+    in production, yet nothing survives the test. Failure-injection triggers
+    are created on this connection and disappear with it.
+
+    Companies other tests may have left committed are disabled inside the
+    transaction, so a run here crawls only what the test configures. That is
+    rolled back too.
+    """
+    assert PIPELINE_DB == SCHEMA_DB
+    connection = schema_engine.connect()
+    transaction = connection.begin()
+    try:
+        assert_schema_test_database(connection)
+        connection.execute(text("UPDATE companies SET is_enabled = false"))
+        yield connection
+    finally:
         transaction.rollback()
         connection.close()

@@ -1,7 +1,8 @@
 """Engine and session construction.
 
-Connection plumbing only. Query and upsert behavior belongs in repositories,
-which do not exist yet.
+Connection plumbing only. Queries and upserts belong in the repositories
+(company, job and crawl); the ingestion service's transactions are opened by
+the store adapter in ``job_radar.persistence.ingestion_store``.
 """
 
 from collections.abc import Iterator

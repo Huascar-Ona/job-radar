@@ -16,8 +16,12 @@ from sqlalchemy.orm import Session
 from job_radar.domain.ingestion import JobUpsertOutcome, JobUpsertResult
 from job_radar.domain.job import NormalizedJob
 
-#: Fields whose change makes a stored job stale. Deliberately excludes
-#: observation time: re-seeing an unchanged job is not a change.
+#: Fields whose change makes a stored job stale: the normalized source-derived
+#: fields and the raw payload itself. Deliberately excludes observation time:
+#: re-seeing an unchanged job is not a change. Because ``raw_data`` is
+#: included, a change to any payload field, even one Job Radar does not
+#: normalize, counts as an update (ADR-0011 erratum, which leaves open whether
+#: it should be).
 HASHED_FIELDS = (
     "title",
     "location",
@@ -123,10 +127,9 @@ RETURNING id, company_id, previous_content_hash
 def content_hash(job: NormalizedJob) -> str:
     """Stable hash over the source-derived fields of an observation.
 
-    Covers exactly what a change in the source would alter. If it covered the
-    raw payload instead, volatile fields unrelated to the posting would defeat
-    the guard; if it covered observation time, every crawl would look like a
-    change.
+    Covers ``HASHED_FIELDS``: the normalized source-derived fields and
+    ``raw_data``. It excludes observation time, or every crawl would look like
+    a change. Keys are sorted, so the same content always hashes the same.
     """
     payload = {field: _hashable(getattr(job, field)) for field in sorted(HASHED_FIELDS)}
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
