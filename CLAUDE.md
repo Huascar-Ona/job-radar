@@ -22,6 +22,17 @@ Architecture documents define system boundaries.
 
 Do not silently change either.
 
+## Recovering context
+
+Read only what the task needs:
+
+- Project status, or planning a milestone: `docs/PROJECT-STATE.md`.
+- How or why something was built: the relevant entry in
+  `docs/DEVELOPMENT-LOG.md`, not the whole log.
+- Behavior, boundaries, decisions: SPEC.md, ARCHITECTURE.md, relevant ADRs.
+- Before acting on any of these, check the claim against the code and Git.
+- To brief another agent: the `project-handoff` skill.
+
 ## Engineering principles
 
 - Prefer official/public APIs over HTML scraping.

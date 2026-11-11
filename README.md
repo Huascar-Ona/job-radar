@@ -13,7 +13,7 @@ The project emphasizes reliable data ingestion, explicit domain boundaries, data
 
 The current implementation provides the domain model, PostgreSQL persistence and migrations, the Greenhouse collector and normalizer, and an ingestion service that orchestrates a crawl run: it reconciles configured boards, crawls each enabled company in its own transaction, isolates per-company failures and records crawl outcomes.
 
-The ingestion service is not yet executable from the command line. The ingestion CLI command is the next step; the current CLI displays the installed application version.
+The ingestion service is not yet executable from the command line. The ingestion CLI command is planned; [`docs/PROJECT-STATE.md`](docs/PROJECT-STATE.md) has the current roadmap. The current CLI displays the installed application version.
 
 ## Technology Stack
 

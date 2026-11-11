@@ -376,8 +376,17 @@ grep -rn -- '<term>' docs README.md CLAUDE.md .claude
    | `Makefile`, `pyproject.toml`, `docker-compose.yml`, `.env.example` | README: Getting Started, Quality Checks. CLAUDE.md. This skill |
    | `.claude/**` | CLAUDE.md. `docs/ai-engineering/TOOL-RADAR.md` |
    | `tests/**` | ARCHITECTURE: Testing boundaries, only if a test layer changes |
-   | A capability completed or scope changed | README: Project Status, Roadmap. CLAUDE.md: Current scope |
+   | A capability completed or scope changed | README: Project Status, Roadmap. CLAUDE.md: Current scope. `docs/PROJECT-STATE.md`; `docs/DEVELOPMENT-LOG.md` when a milestone is committed |
    | A changed document | That document, against the code it describes |
+
+   **Milestone records.** If the change completes a milestone, evaluate
+   `docs/PROJECT-STATE.md` and `docs/DEVELOPMENT-LOG.md`. The milestone's own
+   commit must leave PROJECT-STATE no longer naming it as in progress (and
+   naming the next planned step), and must add its DEVELOPMENT-LOG entry.
+   That entry cannot name its own SHA, so it says how to find it. A completed
+   milestone that leaves either stale is `contradiction-introduced`. Work
+   that is in progress and not being committed as complete must not be
+   described as complete.
 
 3. **Verdict per document.** Read the relevant sections, then give exactly one:
 

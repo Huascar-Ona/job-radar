@@ -18,7 +18,7 @@ an HTTP API is actually needed.
 ## Initial Architecture
 
 ```
-            CLI (entry point; the ingestion command is planned, Step 4D-4)
+            CLI (entry point; the ingestion command is planned, Step 4E)
                                   |
                                   v
                           IngestionService

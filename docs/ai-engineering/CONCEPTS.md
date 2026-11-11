@@ -186,7 +186,7 @@ ways.
 | **mypy strict** | Catches whole error classes before runtime; forces honesty about `None` | [REPO] |
 | **Ruff** | Style and a broad correctness rule set (`S`, `B`, `DTZ`, `PT`, `ARG`) | [REPO: `pyproject.toml`] |
 | **Docker Compose** | Real PostgreSQL on every machine; no SQLite substitution | [REPO] |
-| **Git** | Version control. **Note: this repository currently has no commits** — a real gap in the harness | [REPO] |
+| **Git** | Version control. When this table was written the repository had no commits, a real gap in the harness; it now has a commit history (`git log`) | [REPO] |
 | **SPEC.md** | Defines expected behavior; the reference during implementation | [REPO] |
 | **ARCHITECTURE.md** | Defines boundaries and transaction ownership | [REPO] |
 | **ADRs (15)** | Preserve *why*. Without them, a later agent re-litigates settled decisions | [REPO] |

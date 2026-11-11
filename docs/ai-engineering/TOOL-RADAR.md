@@ -78,9 +78,9 @@ undocumented across all three sources — unrecoverable from code.
 
 ### Skills
 **Category** reusable procedure + context · **Evidence** Repository-verified
-(file exists); behavior only partially exercised · **Job Radar status** one
-skill, `verify-change` (H-002), extended with a documentation impact review
-(H-003) and evidence-capture rules (H-004)
+(file exists); behavior only partially exercised · **Job Radar status** two
+skills: `verify-change` (H-002), extended with a documentation impact review
+(H-003) and evidence-capture rules (H-004); and `project-handoff` (H-004b)
 
 A packaged procedure with its context, loaded on demand when a task matches.
 Progressive disclosure: only the name and description are loaded every
@@ -139,14 +139,28 @@ its approval: it is reported UNVERIFIED, overall PARTIAL, and not rerun
 without fresh approval. It is a procedural rule, not a new execution
 framework, and like the rest of the skill it is followed, not enforced.
 
+**`project-handoff` (H-004b).** Symptom: project status, milestone history
+and verification evidence lived in conversation memory, commit subjects and
+scattered notes. Recent commits have no message bodies, so after a restart,
+or when switching agents, the state had to be re-derived. H-004b adds
+`docs/PROJECT-STATE.md` (a short snapshot), `docs/DEVELOPMENT-LOG.md` (milestone
+history with labelled evidence), and a read-only skill that turns them, plus
+live Git state, into a handoff. The handoff separates verified, reported and
+assumed claims, and runs no gates. Its value depends on the two documents
+being kept current. DOC-IMPACT checks that when a milestone is completed,
+but nothing enforces it. Rehearsed once, on an uncommitted snapshot, which
+exposed a case the skill then learned to handle.
+
 **Not yet verified (radar step 5).** Whether it solved the measured problem
 has not been shown. Since H-002 it has been exercised in working sessions, but
 not in any way recorded in this repository: with PostgreSQL available and each
 integration run approved separately, and with integration omitted (reported
 PARTIAL). A failing check reported through the skill has not been exercised.
-DOC-IMPACT has not been exercised beyond the change that introduced it.
-H-004's capture pattern was shown to preserve a nonzero exit code with a
-harmless command; it has not yet been exercised on a real lost-evidence run.
+DOC-IMPACT has since been exercised beyond the change that introduced it: an
+audit with it produced commit `c95f909`, and it reviewed H-004's own change,
+where it reported older debt without failing. It has not yet been recorded
+failing a change for a contradiction the change introduced. H-004's capture
+pattern was shown to preserve a nonzero exit code with a harmless command; it has not yet been exercised on a real lost-evidence run.
 
 ---
 
