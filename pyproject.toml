@@ -35,7 +35,7 @@ packages = ["src/job_radar"]
 [tool.ruff]
 line-length = 88
 target-version = "py313"
-src = ["src", "tests"]
+src = ["src", "tests", "tools"]
 
 [tool.ruff.lint]
 select = [
@@ -70,13 +70,13 @@ ban-relative-imports = "all"
 [tool.ruff.lint.isort]
 # `tests` is a first-party package (it holds shared test support), not a
 # third-party dependency.
-known-first-party = ["job_radar", "tests"]
+known-first-party = ["job_radar", "tests", "tools"]
 
 # ---------------------------------------------------------------- mypy
 [tool.mypy]
 python_version = "3.13"
 strict = true
-files = ["src", "tests", "migrations"]
+files = ["src", "tests", "migrations", "tools"]
 plugins = ["pydantic.mypy"]
 warn_unreachable = true
 warn_no_return = true

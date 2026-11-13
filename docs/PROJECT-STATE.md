@@ -4,7 +4,7 @@ Entry point for recovering where Job Radar stands. A snapshot, not a source
 of truth: confirm every claim against Git and the code before acting on it.
 History is in [`DEVELOPMENT-LOG.md`](DEVELOPMENT-LOG.md).
 
-**Last updated:** 2026-11-12, at 4G's completion (uncommitted until the 4G commit). This file
+**Last updated:** 2026-11-13, during H1 (uncommitted until the H1 commit). This file
 describes the tree of the commit that last changed it
 (`git log -1 --format='%h %ad' --date=short -- docs/PROJECT-STATE.md`). Later
 commits are not reflected; read them. Uncommitted changes to this file
@@ -12,9 +12,11 @@ describe the working tree, not HEAD.
 
 ## Current milestone
 
-**None in progress.** Last completed: **4G**, Deactivation on verified
-absence. No next milestone has been approved or scoped; agree it with the
-maintainer before starting one.
+**H1, Agent Observability & Efficiency: implemented, awaiting review**
+(approved 2026-11-13). All five phases are done and verified without the
+database (none is needed); the milestone boundaries it reports for 4E–4G are
+inferred and await the maintainer's review. Last completed: **4G**,
+Deactivation on verified absence.
 
 ## Roadmap
 
@@ -26,10 +28,27 @@ maintainer before starting one.
 | 4 | 4E, Ingestion CLI | complete |
 | 5 | 4F, Job listing query (`job-radar jobs`) | complete |
 | 6 | 4G, Deactivation on verified absence | complete |
+| 7 | H1, Agent Observability & Efficiency | implemented, awaiting review |
 
 Each step starts only with explicit approval. Steps 1–4 were agreed with the
-maintainer on 2026-11-11, 4F and 4G on 2026-11-12; the order is not recorded
-anywhere else in the repository. Nothing is planned after 4G.
+maintainer on 2026-11-11, 4F and 4G on 2026-11-12, H1 on 2026-11-13; the
+order is not recorded anywhere else in the repository. Nothing is planned
+after H1.
+
+### Scope of open milestones
+
+**H1, Agent Observability & Efficiency.**
+- Objective: local, read-only metrics for Claude Code sessions: tokens by
+  category, active and wall-clock time, activity, estimated cost from a
+  versioned table, and verification quality, per milestone
+  (`tools/harness_metrics/`, `docs/metrics/README.md`).
+- Decisions: D1–D7 and D9 as proposed; D8 amended: real session ids and
+  paths stay in the Git-ignored `.harness/metrics.local.toml`; committed
+  snapshots use milestone ids only.
+- Remaining: the maintainer reviews the inferred 4E, 4F and 4G boundaries,
+  enters pricing rates if estimates are wanted, and authorizes the commit.
+- Out of scope: Job Radar application changes, network access, new
+  dependencies, automatic attribution, billing data.
 
 
 ## Completed milestones

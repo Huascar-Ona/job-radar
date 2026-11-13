@@ -25,6 +25,86 @@ harness milestones.
 
 ---
 
+## H1: Agent Observability & Efficiency
+
+- **Status:** implemented and verified without the database, awaiting the
+  maintainer's review and commit. Started 2026-11-13 on explicit approval.
+- **Objective:** measure token usage, time, activity, estimated cost and
+  verification quality of Claude Code sessions per milestone, locally and
+  read-only, without coupling to Job Radar (`tools/harness_metrics/`,
+  `docs/metrics/README.md`).
+- **Discovery (read-only):** transcripts write an assistant message once per
+  content block, repeating its usage (593 lines, 263 messages at the time),
+  so totals must be deduplicated by message id; `usage.iterations` repeats
+  the top level; thinking is a subset of output; cache writes are split by
+  lifetime; no cost is recorded; no subagent records exist locally. The
+  preliminary "Step 4G" figures (62,523,086 tokens, 11 m 58 s) were exact
+  but covered the session from 4E through the 4G implementation turn; 11 m
+  58 s was that turn's active time.
+- **Decisions:** D1 `tools/harness_metrics`, standard library only, no
+  import either way with `job_radar` (tested); D2 committed snapshots of
+  aggregates only; D3 hand-maintained segments, suggested from commit times;
+  D4 versioned pricing with source and date, unknown when unpriced; D5 one
+  call per `(session, message.id)`, conflicting duplicates make usage
+  unknown; D6 a hand-maintained outcomes ledger; D7 built-in tool names only
+  (others count as `other`); D8 amended: session ids and paths only in the
+  Git-ignored local file; D9 snapshot milestones when they close.
+- **Phases (each verified before the next):**
+  1. H1-1 parser (`transcript.py`), aggregation (`aggregate.py`), privacy
+     canaries; the parser reproduced the discovery figures exactly.
+  2. H1-2 pricing (`pricing.py`, `docs/metrics/pricing.toml`): the committed
+     table has no rates, so estimates are unknown until the maintainer enters
+     them from the official page.
+  3. H1-3 local configuration (`config.py`), boundary suggestions
+     (`boundaries.py`, read-only `git log`), milestone reports and snapshots
+     (`report.py`), CLI (`cli.py`).
+  4. H1-4 outcomes ledger (`outcomes.py`, `docs/metrics/outcomes.jsonl`),
+     backfilled for 4E–4G from this log: first-pass yield counts decisive
+     runs only; escaped defects are unknown until checked.
+  5. H1-5 documentation, `make metrics`, TOOL-RADAR entry.
+- **Reconciliation:** the committed snapshots for 4E (turns 2–7), 4F (8–13)
+  and 4G (14–19) match an independent computation from the raw transcript in
+  calls, every token category and active time. Turn 1 (the fresh-session
+  check) is mapped locally as `H-005-followup`. All boundaries are labelled
+  inferred; the end turns are the turns of the milestones' commits.
+- **Tests:** `tests/unit/harness/` (parsing, deduplication, conflicts,
+  incomplete usage, drift, turns, tools, pricing, configuration, boundaries,
+  outcomes, reports, CLI privacy, import boundary). Synthetic transcripts
+  only (`tests/support/claude_transcripts.py`). Mutation check: disabling
+  the tool allowlist fails the privacy tests.
+- **Final review (2026-11-13), narrow corrections:**
+  - Boundaries: each end turn (7, 13, 19) contains its milestone's commit,
+    and each start turn (2, 8, 14) is the first prompt naming the
+    milestone, after the previous commit; turns 3–6, 9–12 and 15–18 name
+    only their milestone (a local keyword check printing labels, not text).
+    Kept `inferred`: `reviewed` means a person has checked them.
+  - The H1 segment no longer ends at a placeholder turn 99; it ends at the
+    review turn, and a segment beyond the recorded turns is now reported
+    (`segment_extends_beyond_recorded_turns`) instead of absorbing later
+    turns.
+  - "Peak context" is renamed `largest_request_input`: the largest request's
+    input as the API's usage fields account it, which is accounting data,
+    not a measurement of the context window. Values re-checked from the raw
+    transcript.
+  - Pricing rates must state `inference_geo` and an explicit request-size
+    range (`"none"` for no upper limit), so a long-request price tier cannot
+    be overlooked silently; the steps to enable estimates are documented.
+  - Quality labels: `reruns` became `later runs (any reason)`, plus
+    `failures re-run` (each failure once) and the data source; first-pass
+    yield is shown as a fraction of decisive first runs.
+- **Verification (captured, H1 session; output in a session scratchpad, not
+  preserved):** after the final-review corrections: Ruff lint, Ruff format
+  (`130 files already formatted`), mypy (`95 source files`): PASS. Unit:
+  `make test-unit`, exit 0, `871 passed, 267 deselected` (142 of them H1).
+  `git diff --check`: exit 0. `validate`: ok. Privacy scan of every changed
+  and untracked file and of every CLI command's output: no real session id,
+  home path, account identifier or key; `.harness/` is Git-ignored.
+  Integration: not applicable (H1 touches no database code) and not run.
+  DOC-IMPACT: PASS. Only this bullet changed after the gate run.
+- **Commit:** not yet committed.
+- **Follow-up:** maintainer review of the inferred boundaries; pricing rates;
+  an escaped-defect check per milestone.
+
 ## 4G: Deactivation on verified absence
 
 - **Status:** complete, 2026-11-12. Started 2026-11-12 on explicit

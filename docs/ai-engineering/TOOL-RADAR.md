@@ -163,6 +163,28 @@ where it reported older debt without failing. It has not yet been recorded
 failing a change for a contradiction the change introduced. H-004's capture
 pattern was shown to preserve a nonzero exit code with a harmless command; it has not yet been exercised on a real lost-evidence run.
 
+### Session metrics (H1)
+**Category** observability · **Evidence** Repository-verified (unit tests;
+figures reconciled against the raw transcript of the 4E–4G session)
+
+**Symptom that justified it.** A preliminary token count for "Step 4G" was
+exact but covered three milestones, and summing every transcript line
+inflated totals about 2.2×, because Claude Code writes one line per content
+block, each repeating the message's usage.
+
+**What it does.** `tools/harness_metrics` reads transcripts for metadata only
+(an allowlist), counts each API call once, keeps every token category apart,
+splits sessions into milestone segments recorded locally, estimates cost from
+a versioned table (unknown when unpriced, never zero), and joins a ledger of
+gate outcomes and interventions. Committed snapshots carry no session ids,
+paths or content. See `docs/metrics/README.md`.
+
+**Cost/risk.** The transcript format is undocumented and may change; drift is
+reported, not interpreted. Subagent records are unverified. Milestone
+boundaries and the outcomes ledger are maintained by hand. Token figures
+invite being read as a quality score; the report puts quality rows beside
+them for that reason.
+
 ---
 
 ## EVALUATE WHEN NEEDED

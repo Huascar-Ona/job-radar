@@ -136,6 +136,7 @@ The repository includes:
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for architectural context
 - Architecture Decision Records for important technical choices
 - Automated tests, linting, and strict type checking to verify changes
+- Local, read-only session metrics (`make metrics`): token usage, time and verification quality per milestone, kept apart from the application ([`docs/metrics/README.md`](docs/metrics/README.md))
 
 The goal is to use AI assistance while maintaining code quality, architectural consistency, and reproducible development practices.
 

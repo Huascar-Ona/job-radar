@@ -4,7 +4,8 @@ BIN    := $(VENV)/bin
 
 .DEFAULT_GOAL := help
 .PHONY: help venv install up down logs psql lint format typecheck test test-unit \
-        test-integration check migrate revision downgrade alembic-verify clean
+        test-integration check migrate revision downgrade alembic-verify clean \
+        metrics
 
 help: ## Show available targets
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -69,6 +70,9 @@ downgrade: ## Revert the most recent migration
 alembic-verify: ## Confirm Alembic is wired up correctly
 	$(BIN)/alembic heads
 	$(BIN)/alembic current
+
+metrics: ## Compare milestones from local Claude Code sessions (H1, read-only)
+	$(BIN)/python -m tools.harness_metrics milestones
 
 clean: ## Remove caches and build artifacts
 	rm -rf .pytest_cache .mypy_cache .ruff_cache build dist

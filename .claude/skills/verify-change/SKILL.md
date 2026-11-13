@@ -388,6 +388,7 @@ grep -rn -- '<term>' docs README.md CLAUDE.md .claude
    | `config/**`, `src/job_radar/settings.py` | SPEC: Configuration. ADR-0012. README: Getting Started |
    | `Makefile`, `pyproject.toml`, `docker-compose.yml`, `.env.example` | README: Getting Started, Quality Checks. CLAUDE.md. This skill |
    | `.claude/**` | CLAUDE.md. `docs/ai-engineering/TOOL-RADAR.md` |
+   | `tools/**`, `docs/metrics/**` | `docs/metrics/README.md`. `docs/ai-engineering/TOOL-RADAR.md` (session metrics) |
    | `tests/**` | ARCHITECTURE: Testing boundaries, only if a test layer changes |
    | A capability completed or scope changed | README: Project Status, Roadmap. CLAUDE.md: Current scope. `docs/PROJECT-STATE.md`; `docs/DEVELOPMENT-LOG.md` when a milestone is committed |
    | A changed document | That document, against the code it describes |

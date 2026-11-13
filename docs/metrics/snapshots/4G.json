@@ -1,0 +1,91 @@
+{
+  "schema_version": 1,
+  "milestone": "4G",
+  "as_of": "2026-11-13T03:08:34.976000+00:00",
+  "boundary": {
+    "status": "inferred",
+    "basis": [
+      "commit_time"
+    ]
+  },
+  "scope": {
+    "sessions": 1,
+    "typed_turns": 6,
+    "api_calls": 85,
+    "api_calls_unknown_usage": 0,
+    "excluded_synthetic_calls": 0,
+    "excluded_subagent_calls": 0
+  },
+  "tokens": {
+    "input_uncached": 182,
+    "output": 111473,
+    "output_thinking_subset": 23869,
+    "calls_without_thinking_count": 0,
+    "cache_write_5m": 0,
+    "cache_write_1h": 164691,
+    "cache_write_unspecified": 0,
+    "cache_read": 37819207,
+    "processed_input_cumulative": 37984080,
+    "new_context": 164873,
+    "generated_output": 111473,
+    "largest_request_input": 522812,
+    "cache_read_share": 0.9957,
+    "complete": true
+  },
+  "activity": {
+    "tool_use_stops": 79,
+    "tool_calls": {
+      "Bash": 83,
+      "Write": 5
+    },
+    "models": {
+      "claude-opus-5-5": 85
+    },
+    "compactions": 0
+  },
+  "time": {
+    "active_agent_ms": 1059340,
+    "turns_without_duration": 0,
+    "wall_clock_span_ms": 5421679
+  },
+  "cost": {
+    "label": "estimate, not billing",
+    "pricing_version": "unpriced-2026-11-12",
+    "currency": "USD",
+    "amount": null,
+    "priced_calls": 0,
+    "unpriced_calls": 85,
+    "unpriced_reasons": {
+      "no_matching_rate": 85
+    }
+  },
+  "quality": {
+    "recorded": true,
+    "sources": [
+      "backfill"
+    ],
+    "gate_runs": 18,
+    "gate_failures": 1,
+    "failures_by_gate": {
+      "doc_impact": 1
+    },
+    "later_runs_any_reason": 11,
+    "failures_rerun": 1,
+    "first_decisive_runs": 7,
+    "first_decisive_runs_passed": 6,
+    "integration_authorizations_consumed": 1,
+    "interventions": {
+      "contract_amendment": 2
+    },
+    "escaped_defects": null
+  },
+  "data_quality": {
+    "session_anomalies": {}
+  },
+  "data_gaps": [
+    "billing_not_recorded_locally",
+    "cost_estimate_unavailable",
+    "escaped_defects_not_checked",
+    "boundary_inferred_not_reviewed"
+  ]
+}

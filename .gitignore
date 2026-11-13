@@ -23,3 +23,6 @@ htmlcov/
 # Editors
 .idea/
 .vscode/
+
+# H1 harness metrics: local session ids and transcript paths (never committed)
+.harness/
