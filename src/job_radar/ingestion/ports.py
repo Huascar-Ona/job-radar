@@ -10,7 +10,7 @@ the database. Translating SQLAlchemy failures is the adapter's job
 (ADR-0016 addendum).
 """
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Collection, Iterable, Sequence
 from contextlib import AbstractContextManager
 from datetime import datetime
 from typing import Protocol
@@ -49,6 +49,14 @@ class CompanyStore(Protocol):
 class JobStore(Protocol):
     def upsert(self, job: NormalizedJob, *, company_id: int) -> JobUpsertResult: ...
 
+    def count_active(self, company_id: int) -> int: ...
+
+    def count_absent(self, company_id: int, *, present: Collection[str]) -> int: ...
+
+    def deactivate_absent(
+        self, company_id: int, *, present: Collection[str], deactivated_at: datetime
+    ) -> int: ...
+
 
 class CrawlStore(Protocol):
     def start(self, *, started_at: datetime) -> int: ...
@@ -76,6 +84,7 @@ class CrawlStore(Protocol):
         counters: JobCounters,
         error_type: str | None = None,
         error_message: str | None = None,
+        completeness_verified: bool | None = None,
     ) -> int: ...
 
 

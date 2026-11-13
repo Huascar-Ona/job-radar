@@ -7,11 +7,12 @@ failures. Real SQL behavior is covered by the PostgreSQL integration suite.
 """
 
 import copy
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from types import TracebackType
 
+from job_radar.collectors.base import FetchedBoard
 from job_radar.config.boards import BoardConfig, BoardsConfig
 from job_radar.domain.crawl import CompanyCrawlStatus, CrawlRunStatus, JobCounters
 from job_radar.domain.errors import NormalizationError, PersistenceError
@@ -36,6 +37,8 @@ class FakeJobRow:
     content: dict[str, object]
     first_seen_at: datetime
     last_seen_at: datetime
+    is_active: bool = True
+    deactivated_at: datetime | None = None
 
 
 @dataclass
@@ -59,6 +62,7 @@ class FakeResult:
     counters: JobCounters
     error_type: str | None
     error_message: str | None
+    completeness_verified: bool | None = None
 
 
 @dataclass
@@ -243,9 +247,47 @@ class _Jobs:
             row.content = content
             row.last_seen_at = job.observed_at
             outcome = JobUpsertOutcome.UPDATED
+        if row is not None:
+            # Seen again: active again (ADR-0017), like the real upsert.
+            row.is_active = True
+            row.deactivated_at = None
         return JobUpsertResult(
             outcome=outcome, source=source, source_job_id=job.source_job_id, job_id=1
         )
+
+    def _absent(
+        self, state: State, company_id: int, present: Collection[str]
+    ) -> list[FakeJobRow]:
+        if not present:
+            msg = "present ids must not be empty"
+            raise ValueError(msg)
+        return [
+            row
+            for (_, job_id), row in sorted(state.jobs.items())
+            if row.company_id == company_id and row.is_active and job_id not in present
+        ]
+
+    def count_active(self, company_id: int) -> int:
+        state = self._tx.call("count_active", {"company_id": company_id})
+        return sum(
+            1
+            for row in state.jobs.values()
+            if row.company_id == company_id and row.is_active
+        )
+
+    def count_absent(self, company_id: int, *, present: Collection[str]) -> int:
+        state = self._tx.call("count_absent", {"company_id": company_id})
+        return len(self._absent(state, company_id, present))
+
+    def deactivate_absent(
+        self, company_id: int, *, present: Collection[str], deactivated_at: datetime
+    ) -> int:
+        state = self._tx.call("deactivate_absent", {"company_id": company_id})
+        absent = self._absent(state, company_id, present)
+        for row in absent:
+            row.is_active = False
+            row.deactivated_at = deactivated_at
+        return len(absent)
 
 
 class _Crawls:
@@ -289,6 +331,7 @@ class _Crawls:
         counters: JobCounters,
         error_type: str | None = None,
         error_message: str | None = None,
+        completeness_verified: bool | None = None,
     ) -> int:
         state = self._tx.call(
             "record_company", {"company_id": company_id, "status": status}
@@ -303,6 +346,7 @@ class _Crawls:
                 counters,
                 error_type,
                 error_message,
+                completeness_verified,
             )
         )
         return len(state.results)
@@ -312,23 +356,31 @@ class _Crawls:
 
 
 class FakeCollector:
-    """Serves canned postings per board token, or raises a canned exception."""
+    """Serves canned postings per board token, or raises a canned exception.
+
+    A plain sequence is served as a board whose completeness is verified; a
+    ``FetchedBoard`` is served as given.
+    """
 
     def __init__(
-        self, db: FakeDatabase, boards: Mapping[str, Sequence[object] | Exception]
+        self,
+        db: FakeDatabase,
+        boards: Mapping[str, Sequence[object] | FetchedBoard | Exception],
     ) -> None:
         self._db = db
         self.boards = dict(boards)
         self.calls: list[str] = []
         self.open_transactions_during_fetch: list[int] = []
 
-    def fetch_jobs(self, *, board_token: str) -> Sequence[object]:
+    def fetch_jobs(self, *, board_token: str) -> FetchedBoard:
         self.calls.append(board_token)
         self.open_transactions_during_fetch.append(self._db.open_transactions)
         response = self.boards[board_token]
         if isinstance(response, Exception):
             raise response
-        return list(response)
+        if isinstance(response, FetchedBoard):
+            return response
+        return FetchedBoard(postings=list(response), completeness_verified=True)
 
 
 class FakeNormalizer:

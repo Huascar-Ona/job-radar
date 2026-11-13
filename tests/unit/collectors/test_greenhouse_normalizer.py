@@ -231,6 +231,18 @@ def test_id_that_is_not_a_json_integer_is_rejected(bad_id: object) -> None:
     assert "id" in error.reason
 
 
+@pytest.mark.parametrize("value", [0, -1, 7, 8653419002, 2**53 + 1, 10**30])
+def test_an_invalid_postings_id_is_the_id_a_valid_posting_would_store(
+    value: int,
+) -> None:
+    # ADR-0017 (D8'): a reported id protects a stored job from deactivation
+    # only if it is spelled exactly as the stored source_job_id.
+    stored = normalize(posting_with(id=value)).source_job_id
+    reported = rejection(posting_with(id=value, title=None)).source_job_id
+
+    assert reported == stored == str(value)
+
+
 @pytest.mark.parametrize("value", [0, -1])
 def test_non_positive_integer_id_is_accepted(value: int) -> None:
     # No positive-id rule exists, so none is invented.

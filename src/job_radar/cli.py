@@ -99,6 +99,10 @@ LOG_FIELDS: Final = (
     "started_at",
     "limit",
     "more_available",
+    "deactivated",
+    "deactivation_skipped",
+    "absent",
+    "previously_active",
 )
 #: Backstop length for any text value in a log line.
 MAX_LOG_TEXT: Final = 1000
@@ -419,7 +423,7 @@ def _counters(counters: JobCounters) -> str:
     return (
         f"fetched={counters.fetched} new={counters.new}"
         f" existing={counters.existing} updated={counters.updated}"
-        f" invalid={counters.invalid}"
+        f" invalid={counters.invalid} deactivated={counters.deactivated}"
     )
 
 

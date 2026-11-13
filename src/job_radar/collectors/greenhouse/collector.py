@@ -21,11 +21,11 @@ each is raised after its ``except`` block has ended, so it has neither a
 
 import json
 import re
-from collections.abc import Sequence
 from typing import Final
 
 import httpx
 
+from job_radar.collectors.base import FetchedBoard
 from job_radar.domain.errors import CollectorError
 
 BOARDS_API_ROOT: Final = "https://boards-api.greenhouse.io/v1"
@@ -89,8 +89,11 @@ class GreenhouseCollector:
     def __init__(self, client: httpx.Client) -> None:
         self._client = client
 
-    def fetch_jobs(self, *, board_token: str) -> Sequence[object]:
+    def fetch_jobs(self, *, board_token: str) -> FetchedBoard:
         """Return the board's postings, exactly as Greenhouse sent them.
+
+        Completeness is verified when ``meta.total`` is present and equals
+        the number of postings; absent, it is unverified (ADR-0017).
 
         Raises:
             CollectorError: the board could not be retrieved, or what came
@@ -140,7 +143,7 @@ class GreenhouseCollector:
 
     # -- envelope ------------------------------------------------------------
 
-    def _postings(self, board_token: str, response: httpx.Response) -> Sequence[object]:
+    def _postings(self, board_token: str, response: httpx.Response) -> FetchedBoard:
         body: object
         try:
             body = response.json()
@@ -173,12 +176,12 @@ class GreenhouseCollector:
             )
         # Element shape is deliberately not checked: one unconvertible posting
         # must not fail an otherwise good board (ADR-0016).
-        self._check_completeness(board_token, body.get("meta"), len(jobs))
-        return jobs
+        verified = self._check_completeness(board_token, body.get("meta"), len(jobs))
+        return FetchedBoard(postings=jobs, completeness_verified=verified)
 
     def _check_completeness(
         self, board_token: str, meta: object, job_count: int
-    ) -> None:
+    ) -> bool:
         """Enforce ``meta.total`` when Greenhouse reports it (ADR-0016 addendum).
 
         ``meta.total`` is observed but undocumented, so its absence is
@@ -186,9 +189,11 @@ class GreenhouseCollector:
         must agree with ``jobs``: a board that disagrees with its own count is
         a failed crawl, never a silently truncated successful one. No
         pagination is attempted.
+
+        Returns whether completeness was verified.
         """
         if meta is None:
-            return
+            return False
         if not isinstance(meta, dict):
             raise self._failure(
                 board_token,
@@ -197,7 +202,7 @@ class GreenhouseCollector:
             )
         total: object = meta.get("total")
         if total is None:
-            return
+            return False
         # bool is an int subclass in Python, but JSON true is not a count.
         if isinstance(total, bool) or not isinstance(total, int):
             raise self._failure(
@@ -212,6 +217,7 @@ class GreenhouseCollector:
                 "decode",
                 f"'meta.total' is {quoted} but 'jobs' has {job_count} entries",
             )
+        return True
 
     def _failure(
         self, board_token: str, operation: str, message: str

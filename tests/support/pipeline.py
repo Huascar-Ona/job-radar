@@ -237,6 +237,10 @@ def counters(row: Row) -> tuple[int, int, int, int, int]:
     return fetched, new, existing, updated, invalid
 
 
+def _int(value: object) -> int:
+    return int(str(value))
+
+
 def duplicate_identities(connection: Connection) -> list[Row]:
     return _rows(
         connection,
@@ -250,7 +254,8 @@ def assert_run_is_consistent(connection: Connection, run_id: int) -> None:
 
     The run's counters equal the sum of its result rows, each row satisfies
     ``fetched = new + existing + invalid`` and ``updated <= existing``, a
-    failed row has zero counters, and no job identity is stored twice.
+    failed row has zero counters and no completeness, a successful row
+    records its completeness, and no job identity is stored twice.
     """
     run = run_row(connection, run_id)
     results = list(results_of(connection, run_id).values())
@@ -259,12 +264,20 @@ def assert_run_is_consistent(connection: Connection, run_id: int) -> None:
     assert run["companies_failed"] == sum(r["status"] == "failed" for r in results)
     sums = [sum(column) for column in zip(*(counters(r) for r in results), strict=True)]
     assert list(counters(run)) == (sums or [0, 0, 0, 0, 0])
+    # ADR-0017: deactivated counts stored jobs, outside the identity above.
+    assert _int(run["jobs_deactivated"]) == sum(
+        _int(r["jobs_deactivated"]) for r in results
+    )
     for result in results:
         fetched, new, existing, updated, invalid = counters(result)
         assert fetched == new + existing + invalid, result
         assert updated <= existing, result
         if result["status"] == "failed":
             assert counters(result) == (0, 0, 0, 0, 0), result
+            assert result["jobs_deactivated"] == 0, result
+            assert result["completeness_verified"] is None, result
+        else:
+            assert result["completeness_verified"] is not None, result
     assert duplicate_identities(connection) == []
 
 

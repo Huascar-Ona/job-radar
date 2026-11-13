@@ -379,11 +379,11 @@ def test_summary_lists_status_companies_and_totals() -> None:
         "finished at: 2026-09-15T12:00:05+00:00\n"
         "companies: 2 total, 1 succeeded, 1 failed\n"
         "  success greenhouse/acme (Acme):"
-        " fetched=3 new=2 existing=1 updated=0 invalid=0\n"
+        " fetched=3 new=2 existing=1 updated=0 invalid=0 deactivated=0\n"
         "  failed greenhouse/broken (Broken):"
-        " fetched=0 new=0 existing=0 updated=0 invalid=0;"
+        " fetched=0 new=0 existing=0 updated=0 invalid=0 deactivated=0;"
         " CollectorError: HTTP 500\n"
-        "totals: fetched=3 new=2 existing=1 updated=0 invalid=0\n"
+        "totals: fetched=3 new=2 existing=1 updated=0 invalid=0 deactivated=0\n"
     )
 
 
@@ -392,7 +392,29 @@ def test_summary_of_a_run_without_companies() -> None:
 
     assert text.splitlines()[0] == "crawl run 42: success"
     assert "companies: 0 total, 0 succeeded, 0 failed" in text
-    assert text.endswith("totals: fetched=0 new=0 existing=0 updated=0 invalid=0\n")
+    assert text.endswith(
+        "totals: fetched=0 new=0 existing=0 updated=0 invalid=0 deactivated=0\n"
+    )
+
+
+def test_summary_reports_deactivated_jobs() -> None:
+    # ADR-0017: stored jobs found absent, outside fetched = new + existing +
+    # invalid.
+    closing = company(
+        "acme",
+        CompanyCrawlStatus.SUCCESS,
+        JobCounters(fetched=2, existing=2, deactivated=3),
+    )
+
+    text = cli.render_summary(summary(CrawlRunStatus.SUCCESS, closing))
+
+    assert text.splitlines()[-2] == (
+        "  success greenhouse/acme (Acme):"
+        " fetched=2 new=0 existing=2 updated=0 invalid=0 deactivated=3"
+    )
+    assert text.splitlines()[-1] == (
+        "totals: fetched=2 new=0 existing=2 updated=0 invalid=0 deactivated=3"
+    )
 
 
 # --- configuration failures ---------------------------------------------------------
@@ -569,6 +591,24 @@ def test_log_lines_carry_the_required_failure_fields() -> None:
     assert entry["error"] == "HTTP 500"
     assert entry["fetched"] == 0
     assert str(entry["time"]).endswith("+00:00")
+
+
+def test_deactivation_fields_are_serialized() -> None:
+    # ADR-0017: skip reasons are recorded in the structured logs only.
+    entry = format_record(
+        operation="deactivate_jobs",
+        deactivation_skipped="large_disappearance",
+        absent=6,
+        previously_active=10,
+        deactivated=0,
+    )
+
+    assert (
+        entry["deactivation_skipped"],
+        entry["absent"],
+        entry["previously_active"],
+        entry["deactivated"],
+    ) == ("large_disappearance", 6, 10, 0)
 
 
 def test_log_lines_drop_fields_outside_the_allowlist() -> None:

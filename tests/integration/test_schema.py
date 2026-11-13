@@ -152,9 +152,13 @@ def test_all_four_tables_exist(schema_engine: Engine) -> None:
         ("jobs", "apply_url", True),
         ("jobs", "source_published_at", True),
         ("jobs", "source_updated_at", True),
+        ("jobs", "deactivated_at", True),
         ("crawl_runs", "status", False),
         ("crawl_runs", "started_at", False),
         ("crawl_runs", "finished_at", True),
+        ("crawl_runs", "jobs_deactivated", False),
+        ("crawl_company_results", "jobs_deactivated", False),
+        ("crawl_company_results", "completeness_verified", True),
         ("crawl_company_results", "crawl_run_id", False),
         ("crawl_company_results", "company_id", False),
         ("crawl_company_results", "status", False),
@@ -310,13 +314,13 @@ def test_counters_default_to_zero(connection: Connection) -> None:
 
     row = connection.execute(
         text(
-            "SELECT jobs_fetched, jobs_new, jobs_existing, jobs_updated, jobs_invalid"
-            " FROM crawl_runs WHERE id = :id"
+            "SELECT jobs_fetched, jobs_new, jobs_existing, jobs_updated, jobs_invalid,"
+            " jobs_deactivated FROM crawl_runs WHERE id = :id"
         ),
         {"id": run_id},
     ).one()
 
-    assert list(row) == [0, 0, 0, 0, 0]
+    assert list(row) == [0, 0, 0, 0, 0, 0]
 
 
 # --- foreign keys -----------------------------------------------------------
@@ -426,6 +430,7 @@ def test_company_result_rejects_undocumented_status(
         "jobs_existing",
         "jobs_updated",
         "jobs_invalid",
+        "jobs_deactivated",
     ],
 )
 def test_crawl_run_rejects_negative_counters(
@@ -439,7 +444,14 @@ def test_crawl_run_rejects_negative_counters(
 
 @pytest.mark.parametrize(
     "counter",
-    ["jobs_fetched", "jobs_new", "jobs_existing", "jobs_updated", "jobs_invalid"],
+    [
+        "jobs_fetched",
+        "jobs_new",
+        "jobs_existing",
+        "jobs_updated",
+        "jobs_invalid",
+        "jobs_deactivated",
+    ],
 )
 def test_company_result_rejects_negative_counters(
     connection: Connection, counter: str

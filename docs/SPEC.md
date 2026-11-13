@@ -85,6 +85,8 @@ value that persistence consumes; storing it would duplicate `last_seen_at`.
 |---|---|---|
 | first_seen_at | `observed_at` | **preserved, never assigned** |
 | last_seen_at | `observed_at` | `observed_at` |
+| is_active | `true` | `true` (a deactivated job is reactivated) |
+| deactivated_at | NULL | NULL (cleared on re-observation) |
 
 Every other field is carried straight across from the observation.
 
@@ -177,12 +179,13 @@ enforced:
 No pagination is implemented or attempted. A mismatch fails the company rather
 than letting a truncated board be recorded as a successful crawl.
 
-**Known design debt (recorded 2026-11-11).** Whether a response's
-completeness was verified is not recorded anywhere. The collector returns the
-postings alone, and neither the logs nor `crawl_company_results` distinguish a
-verified board from an unverified one. The ADR-0004 addendum requires future
-deactivation to account for unverified completeness, so this must be resolved
-before deactivation is introduced. Nothing tracks it yet.
+**Completeness is recorded (resolved 2026-11-12, Step 4G).** The design debt
+recorded on 2026-11-11, that whether completeness was verified was recorded
+nowhere, is resolved: the collector returns `FetchedBoard(postings,
+completeness_verified)`, true only when `meta.total` is present and equals
+the number of postings, and each successful company result records it in
+`crawl_company_results.completeness_verified` (NULL for a failed company).
+Deactivation requires it ("Active state").
 
 ## Documented provider guarantees
 
@@ -305,21 +308,63 @@ under test.
 
 ## Active state
 
-For the MVP, every successfully ingested job is active (ADR-0004).
+Approved 2026-11-12 (Step 4G; ADR-0017, under ADR-0004's constraints).
 
 - Newly inserted jobs are written with `is_active = true`.
-- Re-observed jobs are set to `is_active = true`.
-- Nothing in the MVP sets `is_active = false`.
+- Re-observed jobs are set to `is_active = true` and their `deactivated_at`
+  is cleared: a deactivated job that reappears is active again and counts as
+  `existing`.
+- A job is set `is_active = false`, with `deactivated_at` = the run's
+  `observed_at`, only when it is **absent** from a crawl of its company that
+  succeeded and passed every guard below. Rows are never deleted; content,
+  `raw_data`, `first_seen_at` and `last_seen_at` are untouched.
 
-Deactivation is deferred. When it is introduced, it may only reason about a
-job's absence from a crawl of that company that **succeeded**. A failed
-company crawl must never affect the `is_active` or `last_seen_at` of that
-company's existing jobs.
+**Absence** is set membership: a stored job of company C is absent when its
+`source_job_id` is not among the ids of this fetch, which are the ids of its
+valid postings (including postings whose identity belongs to another
+company) and of invalid postings whose id is known and canonical. It never
+compares `last_seen_at` with the clock.
 
-A company whose every posting was `invalid` still records `success`
-(ADR-0016). Future deactivation must not treat such a crawl, or one whose
-completeness was not verified, as proof that the company's jobs disappeared
-(ADR-0004 addendum).
+**Order, in C's single success transaction:** count **P**, C's active jobs,
+before any upsert; upsert every posting; evaluate the guards; count **K**,
+C's active jobs absent from this fetch; deactivate them if no guard failed;
+write C's success record. With P = 0 nothing is evaluated or logged.
+
+| Guard, in order | Skip reason |
+|---|---|
+| Completeness verified ("Greenhouse board completeness") | `completeness_unverified` |
+| At least one posting fetched | `empty_board` |
+| Every invalid posting has a canonical id | `invalid_posting_without_id` |
+| At least one valid observation | `no_valid_observations` |
+| Not a large disappearance: skip when `2·K > P` and `K ≥ 5` | `large_disappearance` |
+
+The large-disappearance rule uses stored jobs (P and K), never fetched
+postings, in integer arithmetic: exactly half is not more than half (P = 10,
+K = 5 deactivates; P = 10, K = 6 skips; P = 4, K = 4 deactivates). Nothing
+is remembered between runs; the next crawl re-evaluates.
+
+**Canonical ids.** A normalizer reports an invalid posting's id
+(`NormalizationError.source_job_id`) only when it is exactly the id a valid
+posting would store; Greenhouse does so only for an integer `id`, as its
+decimal text. The service also rejects a reported id that is not a non-blank
+string without surrounding whitespace. An unknown id cannot protect its job,
+so the company is not deactivated in that crawl.
+
+**A skip is not a failure.** The upserts and their counters stand, the
+company records `success` with `deactivated = 0`, and one structured log
+record from `job_radar.ingestion` (operation `deactivate_jobs`, WARNING for
+`large_disappearance`, INFO otherwise) carries the company fields, `run_id`,
+`deactivation_skipped`, `previously_active` and, once known, `absent`. Skip
+reasons are logged only, not persisted. A successful deactivation logs one
+INFO record with `absent` and `deactivated`.
+
+A failed company crawl never changes the `is_active`, `deactivated_at` or
+`last_seen_at` of its jobs. A database failure while counting or
+deactivating rolls back the company's whole transaction, upserts included,
+and records it `failed` like any persistence failure. Disabled and removed
+companies are not crawled, so their jobs are untouched; disabling is not
+deactivation (ADR-0004 addendum). A board whose every posting genuinely
+closes keeps its jobs active, because an empty board is never taken as proof.
 
 ## Ingestion run
 
@@ -478,12 +523,14 @@ Each crawl run records a status:
 A run over zero enabled companies is `success`.
 
 Each company within a run records its own status (`success` or `failed`), its
-counters, and, on failure, the error type and message. A failed company
-records **zero** counters, because none of its writes were committed; what it
-had fetched or attempted before failing appears only in its log record.
+counters, whether its fetch's completeness was verified, and, on failure, the
+error type and message. A failed company records **zero** counters and a NULL
+completeness, because none of its writes were committed; what it had fetched
+or attempted before failing appears only in its log record.
 
-These records are the substrate for future deactivation, which needs to know
-which companies were crawled successfully.
+Deactivation ("Active state") happens only inside a successful company's
+transaction, so a success record exists exactly when its deactivations
+committed.
 
 A run interrupted by an abort or a crash may remain in the `running` state.
 No recovery mechanism exists yet (ADR-0008 addendum).
@@ -499,8 +546,11 @@ A run reports the following counters, per company and aggregated:
 | existing | occurrences whose upsert re-observed a job already stored for this company |
 | updated | subset of `existing` whose source-derived fields changed |
 | invalid | occurrences rejected during normalization, or whose identity belongs to a different company |
+| deactivated | stored jobs this crawl found absent and deactivated ("Active state") |
 
-`fetched = new + existing + invalid` must hold per company.
+`fetched = new + existing + invalid` must hold per company. `deactivated`
+counts stored jobs, not fetched postings, so it is outside that identity; the
+run's `deactivated` is the sum of its companies'.
 
 Counting rules (approved 2026-11-10):
 
@@ -604,8 +654,8 @@ crawl run <id>: <status>
 observed at: <ISO 8601>
 finished at: <ISO 8601>
 companies: <n> total, <n> succeeded, <n> failed
-  <status> <source>/<board_token> (<display_name>): fetched=<n> new=<n> existing=<n> updated=<n> invalid=<n>[; <error_type>: <error_message>]
-totals: fetched=<n> new=<n> existing=<n> updated=<n> invalid=<n>
+  <status> <source>/<board_token> (<display_name>): fetched=<n> new=<n> existing=<n> updated=<n> invalid=<n> deactivated=<n>[; <error_type>: <error_message>]
+totals: fetched=<n> new=<n> existing=<n> updated=<n> invalid=<n> deactivated=<n>
 ```
 
 **Log output.** Log records go to stderr as JSON Lines, one object per line,
@@ -616,7 +666,8 @@ any of these record fields that are present: `source`, `board_token`,
 `persisted_company_id`, `incoming_company_id`, `error_type`, `error`,
 `run_id`, `status`, `companies_total`, `companies_succeeded`,
 `companies_failed`, `fetched`, `new`, `existing`, `updated`, `invalid`,
-`later_unfinished_runs`, `started_at`, `limit`, `more_available`.
+`later_unfinished_runs`, `started_at`, `limit`, `more_available`,
+`deactivated`, `deactivation_skipped`, `absent`, `previously_active`.
 No other field is serialized. A value that is not a string, integer, boolean
 or null is replaced by its type name, text is bounded to 1,000 characters,
 and tracebacks are never written. The handler is attached for the duration
@@ -641,8 +692,9 @@ job-radar jobs [--new-in-last-run | --since TIMESTAMP] [--company TEXT]
 timeout are neither read nor validated, so a missing or invalid ingestion
 setting cannot stop a read. `ingest` keeps loading and validating all three.
 
-**Selection.** Only jobs with `is_active = true` are listed (every stored job
-today; see "Active state"). At most one time selector applies:
+**Selection.** Only jobs with `is_active = true` are listed; jobs deactivated
+on verified absence are not ("Active state"). At most one time selector
+applies:
 
 - none: every active job in the stored history, most recently discovered
   first;
@@ -801,7 +853,6 @@ The MVP does not include:
 
 - Lever
 - Ashby
-- job deactivation
 - inferred role, seniority or geography classification (explicit text
   filters at query time are specified in "Job listing and query")
 - LLM matching

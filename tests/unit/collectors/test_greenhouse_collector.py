@@ -175,7 +175,7 @@ def test_a_valid_token_is_never_rewritten() -> None:
 def test_returns_the_provider_postings() -> None:
     collector, _ = collector_for(responding(200, json_body=board(POSTING)))
 
-    jobs = collector.fetch_jobs(board_token=BOARD)
+    jobs = collector.fetch_jobs(board_token=BOARD).postings
 
     assert list(jobs) == [POSTING]
 
@@ -185,7 +185,7 @@ def test_returns_payloads_without_normalizing_them() -> None:
     # normalizer's job (ADR-0016).
     collector, _ = collector_for(responding(200, json_body=board(POSTING)))
 
-    [job] = collector.fetch_jobs(board_token=BOARD)
+    [job] = collector.fetch_jobs(board_token=BOARD).postings
 
     assert isinstance(job, dict)
     assert job["id"] == 8653419002, "provider field names survive untouched"
@@ -198,7 +198,7 @@ def test_empty_board_is_a_valid_result() -> None:
     # A board with no open roles is not a failure.
     collector, _ = collector_for(responding(200, json_body=board()))
 
-    assert list(collector.fetch_jobs(board_token=BOARD)) == []
+    assert list(collector.fetch_jobs(board_token=BOARD).postings) == []
 
 
 def test_unknown_provider_fields_are_tolerated() -> None:
@@ -207,7 +207,7 @@ def test_unknown_provider_fields_are_tolerated() -> None:
     posting = {**POSTING, "brand_new_field": {"nested": [1, 2]}}
     collector, _ = collector_for(responding(200, json_body=board(posting)))
 
-    [job] = collector.fetch_jobs(board_token=BOARD)
+    [job] = collector.fetch_jobs(board_token=BOARD).postings
 
     # The loose return type forces the caller to narrow, which is the point:
     # the collector promises a list, not a list of valid postings (ADR-0016).
@@ -219,7 +219,7 @@ def test_extra_envelope_keys_are_tolerated() -> None:
     body = {**board(POSTING), "unexpected": 1}
     collector, _ = collector_for(responding(200, json_body=body))
 
-    assert len(collector.fetch_jobs(board_token=BOARD)) == 1
+    assert len(collector.fetch_jobs(board_token=BOARD).postings) == 1
 
 
 def test_non_object_postings_are_left_for_the_normalizer() -> None:
@@ -229,7 +229,7 @@ def test_non_object_postings_are_left_for_the_normalizer() -> None:
         responding(200, json_body=board(POSTING, "not-an-object"))
     )
 
-    assert len(collector.fetch_jobs(board_token=BOARD)) == 2
+    assert len(collector.fetch_jobs(board_token=BOARD).postings) == 2
 
 
 # --- transport failures -----------------------------------------------------
@@ -399,14 +399,14 @@ def test_matching_total_is_accepted() -> None:
     body = {"jobs": [POSTING, other], "meta": {"total": 2}}
     collector, _ = collector_for(responding(200, json_body=body))
 
-    assert list(collector.fetch_jobs(board_token=BOARD)) == [POSTING, other]
+    assert list(collector.fetch_jobs(board_token=BOARD).postings) == [POSTING, other]
 
 
 def test_empty_board_with_total_zero_is_accepted() -> None:
     body = {"jobs": [], "meta": {"total": 0}}
     collector, _ = collector_for(responding(200, json_body=body))
 
-    assert list(collector.fetch_jobs(board_token=BOARD)) == []
+    assert list(collector.fetch_jobs(board_token=BOARD).postings) == []
 
 
 def test_total_greater_than_jobs_is_a_decode_failure() -> None:
@@ -458,14 +458,14 @@ def test_float_total_is_rejected_even_when_parsed_from_the_wire() -> None:
 def test_missing_meta_is_accepted_unverified() -> None:
     collector, _ = collector_for(responding(200, json_body={"jobs": [POSTING]}))
 
-    assert list(collector.fetch_jobs(board_token=BOARD)) == [POSTING]
+    assert list(collector.fetch_jobs(board_token=BOARD).postings) == [POSTING]
 
 
 def test_null_meta_is_accepted_unverified() -> None:
     body = {"jobs": [POSTING], "meta": None}
     collector, _ = collector_for(responding(200, json_body=body))
 
-    assert list(collector.fetch_jobs(board_token=BOARD)) == [POSTING]
+    assert list(collector.fetch_jobs(board_token=BOARD).postings) == [POSTING]
 
 
 @pytest.mark.parametrize(
@@ -483,14 +483,42 @@ def test_meta_without_total_is_accepted_unverified() -> None:
     body = {"jobs": [POSTING], "meta": {"other": "x"}}
     collector, _ = collector_for(responding(200, json_body=body))
 
-    assert list(collector.fetch_jobs(board_token=BOARD)) == [POSTING]
+    assert list(collector.fetch_jobs(board_token=BOARD).postings) == [POSTING]
 
 
 def test_null_total_is_accepted_unverified() -> None:
     body = {"jobs": [POSTING], "meta": {"total": None}}
     collector, _ = collector_for(responding(200, json_body=body))
 
-    assert list(collector.fetch_jobs(board_token=BOARD)) == [POSTING]
+    assert list(collector.fetch_jobs(board_token=BOARD).postings) == [POSTING]
+
+
+@pytest.mark.parametrize(
+    ("body", "verified"),
+    [
+        ({"jobs": [POSTING], "meta": {"total": 1}}, True),
+        ({"jobs": [], "meta": {"total": 0}}, True),
+        ({"jobs": [POSTING]}, False),
+        ({"jobs": [POSTING], "meta": None}, False),
+        ({"jobs": [POSTING], "meta": {"other": "x"}}, False),
+        ({"jobs": [POSTING], "meta": {"total": None}}, False),
+    ],
+    ids=[
+        "matching-total",
+        "empty-total-zero",
+        "no-meta",
+        "null-meta",
+        "no-total",
+        "null-total",
+    ],
+)
+def test_completeness_is_verified_only_by_a_matching_total(
+    body: dict[str, object], verified: bool
+) -> None:
+    # ADR-0017: deactivation reasons about absence only from a verified fetch.
+    collector, _ = collector_for(responding(200, json_body=body))
+
+    assert collector.fetch_jobs(board_token=BOARD).completeness_verified is verified
 
 
 def test_total_counts_malformed_postings_too() -> None:
@@ -499,7 +527,7 @@ def test_total_counts_malformed_postings_too() -> None:
     body = {"jobs": [POSTING, "not-an-object", None], "meta": {"total": 3}}
     collector, _ = collector_for(responding(200, json_body=body))
 
-    assert len(collector.fetch_jobs(board_token=BOARD)) == 3
+    assert len(collector.fetch_jobs(board_token=BOARD).postings) == 3
 
 
 @pytest.mark.parametrize(
@@ -682,7 +710,7 @@ def test_create_client_uses_an_injected_transport_with_production_settings() -> 
     with create_client(
         timeout_seconds=2.5, transport=httpx.MockTransport(handle)
     ) as client:
-        assert GreenhouseCollector(client).fetch_jobs(board_token=BOARD) == []
+        assert GreenhouseCollector(client).fetch_jobs(board_token=BOARD).postings == []
         assert client.timeout.read == 2.5
 
     [request] = seen

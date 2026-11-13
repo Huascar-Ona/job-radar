@@ -32,3 +32,4 @@ ADR.
 | [0014](0014-retain-jobs-source.md) | Retain jobs.source despite being derivable | Accepted |
 | [0015](0015-upsert-outcome-classification.md) | Classify upsert outcomes from the row | Accepted |
 | [0016](0016-greenhouse-ingestion-boundary.md) | Greenhouse ingestion boundary, errors and retries | Accepted |
+| [0017](0017-deactivation-on-verified-absence.md) | Deactivation on verified absence | Accepted |

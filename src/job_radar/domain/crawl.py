@@ -35,6 +35,9 @@ class JobCounters:
 
     `fetched = new + existing + invalid` is the identity SPEC requires; it is
     the caller's job to maintain it, since only the caller knows what it saw.
+    `deactivated` counts stored jobs a crawl found absent and deactivated
+    (ADR-0017); it counts stored jobs, not fetched postings, so it is outside
+    that identity.
     """
 
     fetched: int = 0
@@ -42,6 +45,7 @@ class JobCounters:
     existing: int = 0
     updated: int = 0
     invalid: int = 0
+    deactivated: int = 0
 
     def __post_init__(self) -> None:
         for field in fields(self):
@@ -56,6 +60,7 @@ class JobCounters:
             existing=self.existing + other.existing,
             updated=self.updated + other.updated,
             invalid=self.invalid + other.invalid,
+            deactivated=self.deactivated + other.deactivated,
         )
 
 

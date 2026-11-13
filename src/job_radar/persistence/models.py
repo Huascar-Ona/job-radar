@@ -156,6 +156,9 @@ class Job(Base):
     is_active: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default="true"
     )
+    #: When a verified, successful crawl of its company found it absent
+    #: (ADR-0017). NULL while active; cleared when the job is seen again.
+    deactivated_at: Mapped[datetime | None] = _timestamp(nullable=True)
 
     raw_data: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     #: Hash over the source-derived fields; guards against rewriting a large
@@ -189,6 +192,9 @@ class CrawlRun(Base):
             _non_negative(*COMPANY_COUNTERS, *JOB_COUNTERS),
             name="counters_non_negative",
         ),
+        CheckConstraint(
+            _non_negative("jobs_deactivated"), name="deactivated_non_negative"
+        ),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
@@ -205,13 +211,17 @@ class CrawlRun(Base):
     jobs_existing: Mapped[int] = _counter()
     jobs_updated: Mapped[int] = _counter()
     jobs_invalid: Mapped[int] = _counter()
+    #: Stored jobs this run deactivated (ADR-0017). Outside the
+    #: fetched = new + existing + invalid identity.
+    jobs_deactivated: Mapped[int] = _counter()
 
 
 class CrawlCompanyResult(Base):
     """The outcome of one company within one run.
 
-    This is the record future deactivation depends on: it may only reason
-    about absence after a crawl of that company that succeeded (ADR-0004).
+    Deactivation may only reason about absence after a crawl of that company
+    that succeeded (ADR-0004); ADR-0017 deactivates inside the success
+    record's own transaction and records the count and completeness here.
     """
 
     __tablename__ = "crawl_company_results"
@@ -221,6 +231,9 @@ class CrawlCompanyResult(Base):
         ),
         CheckConstraint(_status_check("status", CompanyCrawlStatus), name="status"),
         CheckConstraint(_non_negative(*JOB_COUNTERS), name="counters_non_negative"),
+        CheckConstraint(
+            _non_negative("jobs_deactivated"), name="deactivated_non_negative"
+        ),
         Index(
             "ix_crawl_company_results_company_status_finished",
             "company_id",
@@ -251,6 +264,11 @@ class CrawlCompanyResult(Base):
     jobs_existing: Mapped[int] = _counter()
     jobs_updated: Mapped[int] = _counter()
     jobs_invalid: Mapped[int] = _counter()
+    #: Stored jobs this crawl deactivated (ADR-0017).
+    jobs_deactivated: Mapped[int] = _counter()
+    #: Whether the provider confirmed the fetch was the whole board. NULL for
+    #: a failed company.
+    completeness_verified: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
     error_type: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)

@@ -13,7 +13,7 @@ The project emphasizes reliable data ingestion, explicit domain boundaries, data
 
 The current implementation provides the domain model, PostgreSQL persistence and migrations, the Greenhouse collector and normalizer, and an ingestion service that orchestrates a crawl run: it reconciles configured boards, crawls each enabled company in its own transaction, isolates per-company failures and records crawl outcomes.
 
-The `job-radar ingest` command runs one crawl from the command line (Step 4E), and `job-radar jobs` lists the stored jobs with query-time text filters (Step 4F). [`docs/PROJECT-STATE.md`](docs/PROJECT-STATE.md) has the current roadmap.
+The `job-radar ingest` command runs one crawl from the command line (Step 4E), and `job-radar jobs` lists the stored jobs with query-time text filters (Step 4F). Jobs that disappear from a verified, successful crawl of their board are deactivated rather than deleted (Step 4G). [`docs/PROJECT-STATE.md`](docs/PROJECT-STATE.md) has the current roadmap.
 
 ## Technology Stack
 
@@ -96,7 +96,7 @@ job-radar ingest       # crawls every enabled board in the board configuration o
 job-radar jobs         # lists the 50 most recently discovered active jobs
 ```
 
-`ingest` makes **real HTTPS requests** to the public Greenhouse Board API (`boards-api.greenhouse.io`) for each board marked `enabled: true` in `config/boards.yml`. It **writes to the configured database**: it reconciles the configured boards into `companies`, which disables any company missing from the file, and records jobs and the crawl run's outcome. Edit `config/boards.yml` to choose which boards are crawled.
+`ingest` makes **real HTTPS requests** to the public Greenhouse Board API (`boards-api.greenhouse.io`) for each board marked `enabled: true` in `config/boards.yml`. It **writes to the configured database**: it reconciles the configured boards into `companies`, which disables any company missing from the file, and records jobs and the crawl run's outcome. A job missing from a board's response is marked inactive (never deleted) only when Greenhouse confirmed the response was complete (`meta.total`), the crawl succeeded, every posting had a usable id, and no more than half of the company's active jobs vanished at once (or fewer than five did); otherwise the reason is logged and nothing is deactivated. A job that comes back is active again. The summary reports `deactivated=N`; the rules are in [`docs/SPEC.md`](docs/SPEC.md), "Active state". Edit `config/boards.yml` to choose which boards are crawled.
 
 `ingest` takes no options and does not run migrations: run `make migrate` first. It prints a run summary on stdout and writes JSON Lines logs on stderr. It exits 0 whenever the run completes, including `partial_success` and `failed` runs. It exits 1 when settings, the board file or the database stop it. The contract is in [`docs/SPEC.md`](docs/SPEC.md), "Command-line interface".
 
@@ -195,7 +195,7 @@ The roadmap represents planned development directions rather than committed deli
 ### Phase 3 — Job History & Data Quality
 
 - [ ] Track historical changes in job descriptions and metadata
-- [ ] Detect newly published, updated, and removed job postings
+- [ ] Detect newly published, updated, and removed job postings (partial: new and updated postings are counted per run; removed ones are deactivated on verified absence)
 - [ ] Implement configurable policies for inactive job detection
 - [ ] Introduce cross-source duplicate detection
 - [ ] Normalize job locations, employment types, and compensation ranges

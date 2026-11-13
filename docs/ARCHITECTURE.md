@@ -67,6 +67,7 @@ Where each part lives:
 | `create_read_only_engine`, `read_only_session` | `job_radar.persistence.session` |
 | `DatabaseSettings` (database URL only), `Settings` (adds board file and HTTP timeout) | `job_radar.settings` |
 | `IngestionService`, crawl summaries | `job_radar.ingestion.service`, `job_radar.ingestion.summary` |
+| Deactivation guards (pure policy, ADR-0017) | `job_radar.ingestion.deactivation` |
 | `StoreFactory` and the store protocols | `job_radar.ingestion.ports` |
 | `SqlAlchemyStoreFactory` | `job_radar.persistence.ingestion_store` |
 | `CompanyRepository`, `JobRepository`, `CrawlRepository` | `job_radar.persistence.*_repository` |
@@ -206,7 +207,7 @@ error each raises says which half failed.
 |---|---|---|
 | Knows | transport, provider endpoints | provider field semantics, the normalized contract |
 | Never knows | Job Radar domain semantics | HTTP, persistence |
-| Does | build the URL, GET with a bounded timeout, classify status, decode JSON, verify the response envelope (including its completeness count, where the provider reports one), return provider payloads | translate one provider posting into a `NormalizedJob` |
+| Does | build the URL, GET with a bounded timeout, classify status, decode JSON, verify the response envelope (including its completeness count, where the provider reports one), return provider payloads with whether completeness was verified (`FetchedBoard`) | translate one provider posting into a `NormalizedJob`; on rejection, report the posting's id only when it is exactly the stored form (ADR-0017) |
 | Never does | build `NormalizedJob`, decide observation times, write to the database, filter postings | perform I/O of any kind |
 | Raises | `CollectorError` — the provider did not deliver a usable board | `NormalizationError` — the board arrived but one posting cannot be converted |
 
@@ -233,14 +234,15 @@ Crawl outcomes are first-class persisted data, not just log lines
 - A `crawl_run` row records the run: status (`success`, `partial_success`,
   `failed`), timing, and aggregated counters.
 - A `crawl_company_result` row records each company within the run: status,
-  counters, and error details on failure.
+  counters (including `jobs_deactivated`), whether the fetch's completeness
+  was verified, and error details on failure.
 
-This exists because deferred deactivation (ADR-0004) may only reason about a
-job's absence from a **successful** crawl of its company. Without a durable
-record of which crawls succeeded, a future "job disappeared" rule would
-deactivate jobs whose board merely failed to respond. That failure mode is
-silent and unrecoverable, so the record is built now even though nothing
-consumes it yet.
+Deactivation (ADR-0004, ADR-0017) only reasons about a job's absence from a
+**successful**, completeness-verified crawl of its company, and happens
+inside that company's success transaction, so its result row exists exactly
+when its deactivations committed. The guards and the order of the
+transaction are in SPEC, "Active state"; the pure guard policy lives in
+`job_radar.ingestion.deactivation`.
 
 Raw source responses are retained per job for debugging.
 
@@ -289,9 +291,10 @@ Transactions within one run (approved 2026-11-10; SPEC, "Ingestion run"):
    company's source has a collector wired. A wiring error raises
    `ValueError` before this transaction commits, so it rolls back.
 2. Opening the run row in the `running` state.
-3. One per company: its job writes and, on success, its result row. On
-   failure it rolls back, and the failed result is written in a further,
-   separate transaction.
+3. One per company: the count of its active jobs, its job writes, the
+   deactivation of its absent jobs when every guard holds (ADR-0017) and, on
+   success, its result row. On failure it rolls back, deactivation included,
+   and the failed result is written in a further, separate transaction.
 4. Finishing the run row.
 
 If the separate failure-record transaction also fails, the run aborts and may
@@ -319,6 +322,12 @@ parameters, row content or driver message text (ADR-0016 addendum).
   failures are injected by temporary PostgreSQL triggers created in that
   transaction. Two durability tests commit for real, on identifiers no other
   test uses, and delete exactly those rows afterwards.
+- Deactivation is tested at three levels: the pure guards
+  (`tests/unit/ingestion/test_deactivation_policy.py`), the service against
+  in-memory fakes (`tests/unit/ingestion/test_ingestion_deactivation.py`),
+  and the pipeline against PostgreSQL inside the rolled-back transaction,
+  including a trigger that makes the deactivating `UPDATE` fail
+  (`tests/integration/test_ingestion_pipeline_deactivation.py`).
 - Acceptance tests drive the ingest command end to end through
   `job_radar.cli.run_ingest`, with only the HTTP transport stubbed and the
   clock fixed, against the schema test database
@@ -348,7 +357,6 @@ Future sources:
 
 Out of scope for the first milestone:
 
-- job deactivation
 - inferred classification and matching (explicit text filters at query time
   exist since Step 4F: SPEC, "Job listing and query")
 - LLM matching

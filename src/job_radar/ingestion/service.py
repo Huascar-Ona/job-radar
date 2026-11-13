@@ -8,8 +8,10 @@ and "Run reporting", and ARCHITECTURE "Transaction ownership". In short:
 2. ``observed_at`` is read once from the clock, and the run row is opened in
    the ``running`` state and committed.
 3. Companies are crawled one at a time. Each is fetched **outside** any
-   transaction, then its postings are normalized and upserted in response
-   order in one transaction that also writes its success record.
+   transaction, then, in one transaction: its active jobs are counted, its
+   postings are normalized and upserted in response order, its absent jobs
+   are deactivated when every ADR-0017 guard holds, and its success record
+   is written.
 4. The run row is finished with its status and totals.
 
 A ``CollectorError`` or ``PersistenceError`` fails one company: its
@@ -17,12 +19,13 @@ transaction rolls back and a failure record with zero counters is written in
 a new transaction. If that record cannot be written, the run aborts and may
 stay ``running``. Any other exception is a programming error and propagates.
 
-No retries, no concurrency, no deactivation (ADR-0016, ADR-0009, ADR-0004).
+No retries and no concurrency (ADR-0016, ADR-0009). Deactivation only on
+verified absence (ADR-0017).
 """
 
 import logging
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Final
 
@@ -37,6 +40,13 @@ from job_radar.domain.crawl import (
 from job_radar.domain.errors import CollectorError, NormalizationError, PersistenceError
 from job_radar.domain.ingestion import JobUpsertOutcome
 from job_radar.domain.job import JobSource
+from job_radar.ingestion.deactivation import (
+    CrawlFacts,
+    SkipReason,
+    canonical_source_job_id,
+    is_large_disappearance,
+    precheck,
+)
 from job_radar.ingestion.ports import IngestionStore, StoredCompany, StoreFactory
 from job_radar.ingestion.summary import CompanyCrawlSummary, CrawlRunSummary
 
@@ -53,6 +63,10 @@ OP_START_RUN: Final = "start_run"
 OP_PERSIST_COMPANY: Final = "persist_company"
 OP_RECORD_FAILURE: Final = "record_company_failure"
 OP_FINISH_RUN: Final = "finish_run"
+#: Log operation for deactivation records; a database failure while
+#: deactivating is reported under OP_PERSIST_COMPANY, like any write of the
+#: company's transaction.
+OP_DEACTIVATE: Final = "deactivate_jobs"
 
 #: The failures that fail one company rather than the run (SPEC, "Failure
 #: classes").
@@ -77,6 +91,21 @@ class _Tally:
             updated=self.updated,
             invalid=self.invalid,
         )
+
+
+@dataclass(slots=True)
+class _Ingested:
+    """What one company's upserts observed, for the deactivation guards."""
+
+    counters: JobCounters = field(default_factory=JobCounters)
+    #: Ids of this fetch: valid postings (conflicting ones included) and
+    #: invalid postings whose id is canonical. A stored job outside it is
+    #: absent (ADR-0017).
+    present: set[str] = field(default_factory=set)
+    #: Postings that normalized into a job.
+    valid: int = 0
+    #: Invalid postings whose id is unknown or not canonical.
+    invalid_without_id: int = 0
 
 
 class IngestionService:
@@ -202,6 +231,7 @@ class IngestionService:
                 "existing": totals.existing,
                 "updated": totals.updated,
                 "invalid": totals.invalid,
+                "deactivated": totals.deactivated,
             },
         )
         return CrawlRunSummary(
@@ -224,15 +254,27 @@ class IngestionService:
         failure: CollectorError | PersistenceError
         try:
             # Outside any transaction: no connection is held during HTTP.
-            postings = self._collectors[source].fetch_jobs(
-                board_token=company.board_token
-            )
+            board = self._collectors[source].fetch_jobs(board_token=company.board_token)
+            postings = board.postings
             fetched = len(postings)
             with self._store(operation=OP_PERSIST_COMPANY) as store:
-                counters = self._ingest(store, company, postings, observed_at)
+                # Before any upsert: the jobs active before this crawl (E2).
+                previously_active = store.jobs.count_active(company.id)
+                ingested = self._ingest(store, company, postings, observed_at)
+                deactivated = self._deactivate(
+                    store,
+                    run_id,
+                    company,
+                    ingested,
+                    completeness_verified=board.completeness_verified,
+                    previously_active=previously_active,
+                    observed_at=observed_at,
+                )
+                counters = replace(ingested.counters, deactivated=deactivated)
                 finished_at = self._clock.now()
-                # Same transaction as the jobs: the success record exists
-                # exactly when those writes committed (ADR-0008 addendum).
+                # Same transaction as the jobs and their deactivation: the
+                # success record exists exactly when those writes committed
+                # (ADR-0008 addendum, ADR-0017).
                 store.crawls.record_company(
                     run_id,
                     company_id=company.id,
@@ -240,6 +282,7 @@ class IngestionService:
                     started_at=started_at,
                     finished_at=finished_at,
                     counters=counters,
+                    completeness_verified=board.completeness_verified,
                 )
             return CompanyCrawlSummary(
                 company_id=company.id,
@@ -250,6 +293,7 @@ class IngestionService:
                 started_at=started_at,
                 finished_at=finished_at,
                 counters=counters,
+                completeness_verified=board.completeness_verified,
             )
         except _RECOVERABLE as exc:
             failure = exc
@@ -264,14 +308,16 @@ class IngestionService:
         company: StoredCompany,
         postings: Sequence[object],
         observed_at: datetime,
-    ) -> JobCounters:
+    ) -> _Ingested:
         """Normalize and upsert every posting occurrence, in response order.
 
         Duplicate ids are not deduplicated: each occurrence is counted by
-        what its own upsert reports (SPEC, "Run reporting").
+        what its own upsert reports (SPEC, "Run reporting"). Also collects
+        the ids this fetch contained, for the deactivation guards.
         """
         normalizer = self._normalizers[JobSource(company.source)]
         tally = _Tally(fetched=len(postings))
+        ingested = _Ingested()
         for posting in postings:
             try:
                 job = normalizer.normalize(
@@ -279,6 +325,13 @@ class IngestionService:
                 )
             except NormalizationError as exc:
                 tally.invalid += 1
+                # A known, canonical id protects its stored job from
+                # deactivation; an unknown one blocks it (ADR-0017).
+                known = canonical_source_job_id(exc.source_job_id)
+                if known is None:
+                    ingested.invalid_without_id += 1
+                else:
+                    ingested.present.add(known)
                 self._log.warning(
                     "posting rejected for %s: %s",
                     company.board_token,
@@ -293,6 +346,8 @@ class IngestionService:
                 )
                 continue
 
+            ingested.valid += 1
+            ingested.present.add(job.source_job_id)
             result = store.jobs.upsert(job, company_id=company.id)
             match result.outcome:
                 case JobUpsertOutcome.INSERTED:
@@ -323,7 +378,78 @@ class IngestionService:
                             "different company",
                         },
                     )
-        return tally.freeze()
+        ingested.counters = tally.freeze()
+        return ingested
+
+    def _deactivate(
+        self,
+        store: IngestionStore,
+        run_id: int,
+        company: StoredCompany,
+        ingested: _Ingested,
+        *,
+        completeness_verified: bool,
+        previously_active: int,
+        observed_at: datetime,
+    ) -> int:
+        """Deactivate the company's absent jobs if every guard holds.
+
+        Returns how many were deactivated. A skip is not a failure: it logs
+        its reason and returns 0, and the company's upserts stand. Runs inside
+        the company's transaction, so a database failure here rolls back the
+        whole company (ADR-0017).
+        """
+        if previously_active == 0:
+            # Nothing was active, so nothing can be absent: no guard, no log.
+            return 0
+        context: dict[str, object] = {
+            **_company_context(company),
+            "operation": OP_DEACTIVATE,
+            "run_id": run_id,
+            "previously_active": previously_active,
+        }
+        reason = precheck(
+            CrawlFacts(
+                completeness_verified=completeness_verified,
+                fetched=ingested.counters.fetched,
+                valid=ingested.valid,
+                invalid_without_id=ingested.invalid_without_id,
+            )
+        )
+        absent: int | None = None
+        if reason is None:
+            absent = store.jobs.count_absent(company.id, present=ingested.present)
+            if is_large_disappearance(
+                absent=absent, previously_active=previously_active
+            ):
+                reason = SkipReason.LARGE_DISAPPEARANCE
+
+        if reason is not None:
+            if absent is not None:
+                context["absent"] = absent
+            self._log.log(
+                logging.WARNING
+                if reason is SkipReason.LARGE_DISAPPEARANCE
+                else logging.INFO,
+                "deactivation skipped for %s: %s",
+                company.board_token,
+                reason,
+                extra={**context, "deactivation_skipped": str(reason)},
+            )
+            return 0
+
+        if not absent:
+            return 0
+        deactivated = store.jobs.deactivate_absent(
+            company.id, present=ingested.present, deactivated_at=observed_at
+        )
+        self._log.info(
+            "deactivated %d jobs of %s",
+            deactivated,
+            company.board_token,
+            extra={**context, "absent": absent, "deactivated": deactivated},
+        )
+        return deactivated
 
     def _record_failure(
         self,

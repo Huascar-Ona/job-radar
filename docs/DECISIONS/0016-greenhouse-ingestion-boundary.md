@@ -190,3 +190,13 @@ company too:
 - A board whose every posting is `invalid` still **succeeds**, as decided
   above. The risk this creates for future deactivation is recorded in the
   ADR-0004 addendum.
+
+## Addendum, 2026-11-12: completeness reaches the service
+
+Recorded with ADR-0017 (Step 4G). The boundary is unchanged. The collector
+now returns `FetchedBoard(postings, completeness_verified)` instead of the
+postings alone: `completeness_verified` is true only when `meta.total` is
+present and equals the number of postings, and the existing failure rules for
+a mismatched or malformed `meta` are unchanged. A normalizer reports a
+rejected posting's `source_job_id` only when it is exactly the id a valid
+posting would store, so deactivation can rely on it.

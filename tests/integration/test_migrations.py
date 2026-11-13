@@ -180,3 +180,36 @@ def test_downgrade_of_0004_removes_previous_content_hash(
     assert "previous_content_hash" not in db.column_names(
         migration_database_url, "jobs"
     )
+
+
+DEACTIVATION = "0005_job_deactivation"
+
+
+def test_upgrade_through_0005_adds_deactivation_columns(
+    migration_database_url: str,
+) -> None:
+    db.drop_all_tables(migration_database_url)
+
+    db.upgrade(migration_database_url, DEACTIVATION)
+
+    assert "deactivated_at" in db.column_names(migration_database_url, "jobs")
+    assert "jobs_deactivated" in db.column_names(migration_database_url, "crawl_runs")
+    results = db.column_names(migration_database_url, "crawl_company_results")
+    assert {"jobs_deactivated", "completeness_verified"} <= set(results)
+
+
+def test_downgrade_of_0005_removes_deactivation_columns(
+    migration_database_url: str,
+) -> None:
+    db.drop_all_tables(migration_database_url)
+    db.upgrade(migration_database_url, DEACTIVATION)
+
+    db.downgrade(migration_database_url, PREVIOUS_HASH)
+
+    assert "deactivated_at" not in db.column_names(migration_database_url, "jobs")
+    assert "jobs_deactivated" not in db.column_names(
+        migration_database_url, "crawl_runs"
+    )
+    results = db.column_names(migration_database_url, "crawl_company_results")
+    assert not {"jobs_deactivated", "completeness_verified"} & set(results)
+    assert "previous_content_hash" in db.column_names(migration_database_url, "jobs")

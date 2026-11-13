@@ -25,6 +25,93 @@ harness milestones.
 
 ---
 
+## 4G: Deactivation on verified absence
+
+- **Status:** complete, 2026-11-12. Started 2026-11-12 on explicit
+  approval.
+- **Objective:** deactivate a company's active jobs absent from a
+  successful, completeness-verified crawl, preserving history (ADR-0017;
+  SPEC, "Active state"). Out of scope: confirmation or override mechanisms,
+  persisted skip reasons, `--include-inactive`, retries, new sources.
+- **Contract (approved):** D1 new ADR-0017, ADR-0004 stays Accepted; D2
+  `jobs.deactivated_at`; D3 `completeness_verified` and `jobs_deactivated`
+  persisted; D4 `Collector.fetch_jobs` returns `FetchedBoard`; D5 an empty
+  board never deactivates; D6′ skip when `2·K > P` and `K ≥ 5`, logged as a
+  WARNING, not a failure, nothing remembered between runs; D7 `jobs`
+  unchanged; D8′ an invalid posting protects its job only by a canonical
+  id, else the company skips; D9 absence by id set, not by clock; E1 skip
+  reasons in logs only; E2 P counted before upserts in the company
+  transaction.
+- **Implementation checkpoints (each verified before the next):**
+  1. ADR-0017 and its index entry.
+  2. `FetchedBoard` in `job_radar.collectors.base`; the Greenhouse
+     collector reports completeness; fakes adapted. Unit tests: 663 passed.
+  3. Migration `0005_job_deactivation`, models, upsert clears
+     `deactivated_at`. Offline `alembic upgrade/downgrade --sql` rendered
+     the expected DDL without a database.
+  4. `JobRepository.count_active`, `count_absent`, `deactivate_absent`
+     (refuses an empty id set); crawl records carry the new fields; ports,
+     adapter and fakes.
+  5. `job_radar.ingestion.deactivation`: pure guards, the D6′ boundaries and
+     the canonical-id check. 32 unit tests.
+  6. Service wiring in the success transaction; logs; counters. One
+     existing test's expected call order now starts with `count_active`
+     (E2). Mutation check: disabling the large-disappearance rule, the
+     prechecks or the canonical-id check each fails the new service tests.
+  7. CLI summary ` deactivated=N`, four log fields; a Greenhouse test pins
+     that an invalid posting's id equals the id a valid posting stores (the
+     schema rejects non-integer ids, so a reported id is always canonical).
+  8. Integration and acceptance tests written; docs.
+- **Tests:** `tests/unit/ingestion/test_deactivation_policy.py`,
+  `tests/unit/ingestion/test_ingestion_deactivation.py`, collector and
+  normalizer additions, CLI summary and log-field tests.
+  `tests/integration/test_ingestion_pipeline_deactivation.py` (14 tests:
+  deactivation and history, reactivation, idempotent rerun, failed crawl,
+  each guard, D6′ boundaries, a trigger failing the deactivating `UPDATE`
+  rolls back the whole company); migration 0005 up and down; schema
+  nullability and non-negative checks; `assert_run_is_consistent` now also
+  checks the deactivated sum and completeness; three acceptance tests in
+  `tests/integration/test_cli_acceptance.py`.
+- **Verification (captured, 4G session; output in a session scratchpad,
+  not preserved):** Ruff lint, Ruff format (`112 files already
+  formatted`), mypy (`78 source files`): PASS. Unit: `make test-unit`,
+  exit 0, `729 passed, 267 deselected`. `git diff --check`: exit 0.
+  DOC-IMPACT: PASS (stale "deferred deactivation" docstrings in
+  `crawl_repository.py` and `models.py` corrected before the final run).
+  Integration: not run then, PostgreSQL access not yet authorized; 267
+  integration tests collect. Overall: PARTIAL.
+- **Integration (captured, 2026-11-12, on the maintainer's single-use
+  authorization, now consumed):** preflight per verify-change section 4:
+  target `postgresql+psycopg` on `localhost:5432` from the built-in default
+  (no `.env`, no `JOB_RADAR_*` or `PG*` variables, no pg service or pass
+  file), configured database `jobradar` (read only, by
+  `test_database_connection.py`); the section 4b grep matched the skill's
+  description; connectivity probe `True`. A read-only inspection, on
+  read-only connections, found `jobradar_schema_test` and
+  `jobradar_migration_test` holding only the project's tables, every data
+  table empty: nothing to preserve. `make test-integration`: exit 0,
+  `267 passed, 729 deselected in 9.06s`, no failures, errors, skips or
+  warnings. Verified against PostgreSQL: migration 0005 upgrade and
+  downgrade and the drift check; deactivation with history preserved;
+  reactivation; idempotent rerun; a failed crawl changing no job; each
+  guard (unverified completeness, empty board, invalid posting with and
+  without an id, all invalid, disabled company); the D6′ boundaries
+  (10→4 skipped with a WARNING, exactly half deactivated, 4 of 4
+  deactivated); a trigger failing the deactivating `UPDATE` rolling back the
+  company's upserts byte for byte; three deactivation acceptance tests
+  through the CLI; and every pre-existing test, with
+  `assert_run_is_consistent` now checking the deactivated sum and
+  completeness. `git status` was identical before and after.
+- **Final non-database run (captured, after the closing documentation):**
+  Ruff lint, Ruff format (`112 files already formatted`), mypy
+  (`78 source files`): PASS. Unit: `make test-unit`, exit 0,
+  `729 passed, 267 deselected`. `git diff --check`: exit 0. DOC-IMPACT:
+  PASS. No application code or tests changed after the integration run.
+  Only this bullet changed after this run.
+- **Commit:** `git log --format=%h -F --grep='feat(ingestion): deactivate jobs absent from verified crawls'`.
+- **Follow-up:** none required. Known limits are in PROJECT-STATE, "Known
+  issues".
+
 ## 4F: Job listing query
 
 - **Status:** complete, 2026-11-12. Started 2026-11-12 on explicit

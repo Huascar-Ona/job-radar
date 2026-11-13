@@ -36,6 +36,9 @@ class CompanyCrawlSummary:
     error_type: str | None = None
     #: The error's safe message; only set when failed.
     error_message: str | None = None
+    #: Whether the provider confirmed the fetch was the whole board; ``None``
+    #: when the company failed (ADR-0017).
+    completeness_verified: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)

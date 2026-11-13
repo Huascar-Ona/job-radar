@@ -74,3 +74,14 @@ invalid settings, an invalid board file and a `PersistenceError` raised out
 of the run, and reports each as one safe log record with exit code 1, rather
 than a traceback that could quote a database URL. Every other exception
 still propagates as a crash. No status-based exit code is introduced.
+
+## Addendum, 2026-11-12: deactivated counter and completeness
+
+Recorded with ADR-0017 (Step 4G). The statuses and the exit-code decision
+are unchanged. Runs and company results gain a `deactivated` counter
+(`jobs_deactivated`): stored jobs a successful crawl found absent and
+deactivated. It counts stored jobs, not fetched postings, so it stays outside
+`fetched = new + existing + invalid`; a failed company records 0. Company
+results also record `completeness_verified` (NULL for a failed company).
+Deactivation happens inside the successful company's transaction, so the
+success record exists exactly when its deactivations committed.

@@ -18,7 +18,7 @@ So:
 - the original exception is not logged.
 """
 
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Collection, Iterable, Sequence
 from contextlib import suppress
 from datetime import datetime
 from types import TracebackType
@@ -106,6 +106,23 @@ class _Jobs:
             lambda: self._repository.upsert(job, company_id=company_id)
         )
 
+    def count_active(self, company_id: int) -> int:
+        return self._guard.call(lambda: self._repository.count_active(company_id))
+
+    def count_absent(self, company_id: int, *, present: Collection[str]) -> int:
+        return self._guard.call(
+            lambda: self._repository.count_absent(company_id, present=present)
+        )
+
+    def deactivate_absent(
+        self, company_id: int, *, present: Collection[str], deactivated_at: datetime
+    ) -> int:
+        return self._guard.call(
+            lambda: self._repository.deactivate_absent(
+                company_id, present=present, deactivated_at=deactivated_at
+            )
+        )
+
 
 class _Crawls:
     def __init__(self, repository: CrawlRepository, guard: _Guard) -> None:
@@ -149,6 +166,7 @@ class _Crawls:
         counters: JobCounters,
         error_type: str | None = None,
         error_message: str | None = None,
+        completeness_verified: bool | None = None,
     ) -> int:
         return self._guard.call(
             lambda: self._repository.record_company(
@@ -160,6 +178,7 @@ class _Crawls:
                 counters=counters,
                 error_type=error_type,
                 error_message=error_message,
+                completeness_verified=completeness_verified,
             )
         )
 

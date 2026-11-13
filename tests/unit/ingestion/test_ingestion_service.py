@@ -476,7 +476,9 @@ def test_success_record_shares_the_company_transaction() -> None:
     h.run(boards(("alpha", "Alpha")))
 
     [company_tx] = [t for t in h.db.transactions if t.operation == "persist_company"]
-    assert company_tx.calls == ["upsert", "upsert", "record_company"]
+    # The active jobs are counted first, before any upsert (ADR-0017, E2); with
+    # none active there is nothing to deactivate, so no further query.
+    assert company_tx.calls == ["count_active", "upsert", "upsert", "record_company"]
     assert company_tx.outcome == "committed"
 
 

@@ -8,6 +8,8 @@ takes the conflict branch. A read-then-write would let both read "absent".
 
 import hashlib
 import json
+from collections.abc import Collection
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import text
@@ -71,6 +73,11 @@ ON CONFLICT (source, source_job_id) DO UPDATE SET
         WHEN jobs.company_id = EXCLUDED.company_id THEN true
         ELSE jobs.is_active
     END,
+    -- Seen again: a deactivated job is active again (ADR-0017).
+    deactivated_at = CASE
+        WHEN jobs.company_id = EXCLUDED.company_id THEN NULL
+        ELSE jobs.deactivated_at
+    END,
     updated_at = CASE
         WHEN jobs.company_id = EXCLUDED.company_id THEN now()
         ELSE jobs.updated_at
@@ -124,6 +131,32 @@ RETURNING id, company_id, previous_content_hash
 """)
 
 
+# Deactivation (ADR-0017). Absence is set membership: a job is absent when its
+# id is not among the ids of this fetch, never a comparison with the clock.
+# An empty array would make every job absent, so callers must pass at least
+# one id; JobRepository enforces it.
+_COUNT_ACTIVE = text("""
+SELECT count(*) FROM jobs
+WHERE company_id = :company_id AND is_active
+""")
+
+_COUNT_ABSENT = text("""
+SELECT count(*) FROM jobs
+WHERE company_id = :company_id AND is_active
+  AND source_job_id <> ALL(CAST(:present AS text[]))
+""")
+
+_DEACTIVATE_ABSENT = text("""
+UPDATE jobs SET
+    is_active = false,
+    deactivated_at = :deactivated_at,
+    updated_at = now()
+WHERE company_id = :company_id AND is_active
+  AND source_job_id <> ALL(CAST(:present AS text[]))
+RETURNING id
+""")
+
+
 def content_hash(job: NormalizedJob) -> str:
     """Stable hash over the source-derived fields of an observation.
 
@@ -151,6 +184,41 @@ class JobRepository:
 
     def __init__(self, session: Session) -> None:
         self._session = session
+
+    def count_active(self, company_id: int) -> int:
+        """How many of the company's jobs are active right now."""
+        return int(
+            self._session.execute(
+                _COUNT_ACTIVE, {"company_id": company_id}
+            ).scalar_one()
+        )
+
+    def count_absent(self, company_id: int, *, present: Collection[str]) -> int:
+        """How many active jobs of the company have an id not in ``present``."""
+        return int(
+            self._session.execute(
+                _COUNT_ABSENT,
+                {"company_id": company_id, "present": _present_ids(present)},
+            ).scalar_one()
+        )
+
+    def deactivate_absent(
+        self, company_id: int, *, present: Collection[str], deactivated_at: datetime
+    ) -> int:
+        """Deactivate the company's active jobs whose id is not in ``present``.
+
+        Returns how many were deactivated. Rows are never deleted; their
+        content and observation history are untouched.
+        """
+        rows = self._session.execute(
+            _DEACTIVATE_ABSENT,
+            {
+                "company_id": company_id,
+                "present": _present_ids(present),
+                "deactivated_at": deactivated_at,
+            },
+        ).all()
+        return len(rows)
 
     def upsert(self, job: NormalizedJob, *, company_id: int) -> JobUpsertResult:
         """Persist one observation and report what happened.
@@ -203,3 +271,12 @@ class JobRepository:
             source_job_id=job.source_job_id,
             job_id=int(record.id),
         )
+
+
+def _present_ids(present: Collection[str]) -> list[str]:
+    # An empty set would make every active job absent: refuse it here, so no
+    # caller can deactivate a whole company by passing nothing.
+    if not present:
+        msg = "present ids must not be empty"
+        raise ValueError(msg)
+    return sorted(present)

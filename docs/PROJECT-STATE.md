@@ -4,7 +4,7 @@ Entry point for recovering where Job Radar stands. A snapshot, not a source
 of truth: confirm every claim against Git and the code before acting on it.
 History is in [`DEVELOPMENT-LOG.md`](DEVELOPMENT-LOG.md).
 
-**Last updated:** 2026-11-12, at 4F's completion (uncommitted until the 4F commit). This file
+**Last updated:** 2026-11-12, at 4G's completion (uncommitted until the 4G commit). This file
 describes the tree of the commit that last changed it
 (`git log -1 --format='%h %ad' --date=short -- docs/PROJECT-STATE.md`). Later
 commits are not reflected; read them. Uncommitted changes to this file
@@ -12,9 +12,9 @@ describe the working tree, not HEAD.
 
 ## Current milestone
 
-**None in progress.** Last completed: **4F**, Job listing query. No next
-milestone has been approved or scoped; agree it with the maintainer before
-starting one.
+**None in progress.** Last completed: **4G**, Deactivation on verified
+absence. No next milestone has been approved or scoped; agree it with the
+maintainer before starting one.
 
 ## Roadmap
 
@@ -25,15 +25,22 @@ starting one.
 | 3 | H-005, Context Retrieval Efficiency | complete |
 | 4 | 4E, Ingestion CLI | complete |
 | 5 | 4F, Job listing query (`job-radar jobs`) | complete |
+| 6 | 4G, Deactivation on verified absence | complete |
 
 Each step starts only with explicit approval. Steps 1–4 were agreed with the
-maintainer on 2026-11-11 and 4F on 2026-11-12; the order is not recorded
-anywhere else in the repository. Nothing is planned after 4F.
+maintainer on 2026-11-11, 4F and 4G on 2026-11-12; the order is not recorded
+anywhere else in the repository. Nothing is planned after 4G.
+
 
 ## Completed milestones
 
 Most recent first. Commits and evidence are in `DEVELOPMENT-LOG.md`.
 
+- **4G**: deactivation on verified absence (ADR-0017): absent jobs of a
+  successful, completeness-verified crawl are deactivated in the company's
+  transaction behind five guards, reactivated on reappearance; migration
+  0005; `FetchedBoard` collector contract
+  (`git log --format=%h -F --grep='feat(ingestion): deactivate jobs absent from verified crawls'`)
 - **4F**: `job-radar jobs`, a read-only listing of stored active jobs with
   `--since`, `--new-in-last-run`, literal filters, table and JSON Lines
   output, on a `REPEATABLE READ, READ ONLY` engine; `DatabaseSettings` for
@@ -64,6 +71,8 @@ Most recent first. Commits and evidence are in `DEVELOPMENT-LOG.md`.
 
 | Evidence | What | Provenance |
 |---|---|---|
+| Lint, format, mypy, 729 unit tests: PASS; DOC-IMPACT: PASS | 4G tree, after the closing documentation edits | Captured by verify-change, 2026-11-12 (DEVELOPMENT-LOG, 4G). The output files were in a session scratchpad and are not preserved |
+| `make test-integration`, exit 0: 267 integration tests passed, including migration 0005 up and down, 14 pipeline deactivation tests and 10 CLI acceptance tests | 4G tree, before the closing documentation edits (application code and tests identical to the commit) | Captured by verify-change, 2026-11-12, on the maintainer's single-use authorization (DEVELOPMENT-LOG, 4G). The output file was in a session scratchpad and is not preserved |
 | Lint, format, mypy, 657 unit tests: PASS; DOC-IMPACT: PASS | 4F tree, before the closing documentation edits (application code and tests identical to the commit) | Captured by verify-change, 2026-11-12 (DEVELOPMENT-LOG, 4F). The output files were in a session scratchpad and are not preserved |
 | `make test-integration`, exit 0: 242 integration tests passed, including the 24 job query tests (read-only enforcement on fresh and reused pooled connections) and 7 CLI acceptance tests | 4F tree, before the closing documentation edits (application code and tests identical to the commit) | Captured by verify-change, 2026-11-12, on the maintainer's single-use authorization (DEVELOPMENT-LOG, 4F). The output file was in a session scratchpad and is not preserved |
 | Lint, format, mypy, 578 unit tests: PASS; DOC-IMPACT: PASS | 4E tree, after the closing documentation edits, before commit | Captured by verify-change, 2026-11-12 (DEVELOPMENT-LOG, 4E). The output files were in a session scratchpad and are not preserved |
@@ -74,7 +83,7 @@ Most recent first. Commits and evidence are in `DEVELOPMENT-LOG.md`.
 | 483 unit and 209 integration tests: PASS; lint, format, mypy, DOC-IMPACT: PASS | `62265ac` (4D-4) | Reported by the maintainer; no output is preserved in the repository |
 | 284 tests passing | `63df80c` (Step 3) | Commit message |
 
-No continuous integration exists. The last recorded integration run is 4F's.
+No continuous integration exists. The last recorded integration run is 4G's.
 A count above is not evidence for any later tree: run `verify-change`.
 
 ## Known issues and open questions
@@ -96,6 +105,11 @@ A count above is not evidence for any later tree: run `verify-change`.
   file that writes** (for example `test_job_repository.py`, `test_schema.py`,
   `test_upsert_concurrency.py`). Those writes predate 4F and run in the test
   databases; the gap was noted in 4F, not fixed.
+- **Deactivation limits** (ADR-0017): a board without `meta.total` is never
+  deactivated; a board whose every posting closes keeps its jobs active (an
+  empty board is not proof); a company losing more than half of at least
+  five jobs at once keeps them until a later crawl falls under the
+  threshold; skip reasons are in logs only.
 - **verify-change and project-handoff are followed, not enforced.** Nothing
   stops an agent from skipping them, or from leaving this file stale.
 

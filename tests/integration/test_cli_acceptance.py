@@ -53,6 +53,8 @@ BETA = "cli-acceptance-beta"
 TOKENS = (ALPHA, BETA)
 ALPHA_IDS = (991_000_000_001, 991_000_000_002, 991_000_000_003)
 BETA_IDS = (991_000_000_101, 991_000_000_102)
+#: Ten jobs, for the large-disappearance guard (ADR-0017).
+MANY_IDS = tuple(991_000_000_201 + i for i in range(10))
 #: Distinctive instants: a run's started_at is its observed_at, so these
 #: identify this module's runs and nothing else's.
 FIRST = datetime(2032, 2, 2, 0, 0, 11, tzinfo=UTC)
@@ -156,7 +158,7 @@ def _check_untouched(connection: Connection) -> None:
         ),
         {
             "tokens": list(TOKENS),
-            "ids": [str(job_id) for job_id in (*ALPHA_IDS, *BETA_IDS)],
+            "ids": [str(job_id) for job_id in (*ALPHA_IDS, *BETA_IDS, *MANY_IDS)],
             "instants": list(INSTANTS),
         },
     ).scalar_one()
@@ -428,3 +430,85 @@ def test_jobs_new_in_a_partial_run_excludes_the_failing_company(cli: Cli) -> Non
     assert {job["board_token"] for job in listed} == {BETA}
     context = _context(outcome)
     assert (context["status"], context["new"]) == ("partial_success", 2)
+
+
+# --- ADR-0017, deactivation on verified absence ------------------------------------
+
+
+def _active(cli: Cli, token: str) -> list[str]:
+    return sorted(k for k, row in _jobs(cli, token).items() if row["is_active"])
+
+
+def test_ingest_deactivates_a_job_closed_on_a_verified_board(cli: Cli) -> None:
+    cli.configure((ALPHA, "CLI Alpha"))
+    cli.greenhouse.serve(ALPHA, board(*(posting(i) for i in ALPHA_IDS)))
+    assert cli.run().code == 0
+    cli.clock.set(SECOND)
+    kept = ALPHA_IDS[:2]
+    cli.greenhouse.serve(ALPHA, board(*(posting(i) for i in kept)))
+
+    outcome = cli.run()
+
+    assert outcome.code == 0
+    run_id = cli.run_id(SECOND)
+    with cli.verifier.connect() as fresh:
+        result = results_of(fresh, run_id)[ALPHA]
+        assert result["status"] == "success"
+        assert result["jobs_deactivated"] == 1
+        assert result["completeness_verified"] is True
+        assert run_row(fresh, run_id)["jobs_deactivated"] == 1
+        assert_run_is_consistent(fresh, run_id)
+    rows = _jobs(cli, ALPHA)
+    closed = rows[str(ALPHA_IDS[2])]
+    assert closed["is_active"] is False
+    assert closed["deactivated_at"] == SECOND
+    assert closed["last_seen_at"] == FIRST, "the row and its history remain"
+    assert "deactivated=1" in outcome.stdout
+    assert outcome.completion()["deactivated"] == 1
+    # The listing shows active jobs only.
+    listed = _listed(cli.jobs(company=ALPHA, output="jsonl"))
+    assert sorted(str(job["source_job_id"]) for job in listed) == sorted(
+        str(i) for i in kept
+    )
+
+
+def test_ingest_skips_a_large_disappearance_and_still_succeeds(cli: Cli) -> None:
+    cli.configure((ALPHA, "CLI Alpha"))
+    cli.greenhouse.serve(ALPHA, board(*(posting(i) for i in MANY_IDS)))
+    assert cli.run().code == 0
+    cli.clock.set(SECOND)
+    cli.greenhouse.serve(ALPHA, board(*(posting(i) for i in MANY_IDS[:4])))
+
+    outcome = cli.run()  # 6 of 10 previously active jobs vanished
+
+    assert outcome.code == 0
+    run_id = cli.run_id(SECOND)
+    with cli.verifier.connect() as fresh:
+        result = results_of(fresh, run_id)[ALPHA]
+        assert result["status"] == "success"
+        assert result["jobs_deactivated"] == 0
+        assert counters(result) == (4, 0, 4, 0, 0)
+        assert_run_is_consistent(fresh, run_id)
+    assert _active(cli, ALPHA) == sorted(str(i) for i in MANY_IDS)
+    [skip] = [r for r in outcome.records if "deactivation_skipped" in r]
+    assert skip["level"] == "WARNING"
+    assert skip["deactivation_skipped"] == "large_disappearance"
+    assert (skip["absent"], skip["previously_active"]) == (6, 10)
+    assert outcome.failures() == []
+
+
+def test_ingest_does_not_deactivate_without_a_verified_total(cli: Cli) -> None:
+    cli.configure((ALPHA, "CLI Alpha"))
+    cli.greenhouse.serve(ALPHA, board(*(posting(i) for i in ALPHA_IDS)))
+    assert cli.run().code == 0
+    cli.clock.set(SECOND)
+    cli.greenhouse.serve(ALPHA, {"jobs": [posting(ALPHA_IDS[0])]})
+
+    outcome = cli.run()
+
+    assert outcome.code == 0
+    assert _active(cli, ALPHA) == sorted(str(i) for i in ALPHA_IDS)
+    with cli.verifier.connect() as fresh:
+        result = results_of(fresh, cli.run_id(SECOND))[ALPHA]
+        assert result["completeness_verified"] is False
+        assert result["jobs_deactivated"] == 0
