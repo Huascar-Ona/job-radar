@@ -13,7 +13,7 @@ The project emphasizes reliable data ingestion, explicit domain boundaries, data
 
 The current implementation provides the domain model, PostgreSQL persistence and migrations, the Greenhouse collector and normalizer, and an ingestion service that orchestrates a crawl run: it reconciles configured boards, crawls each enabled company in its own transaction, isolates per-company failures and records crawl outcomes.
 
-The `job-radar ingest` command runs one crawl from the command line (Step 4E). [`docs/PROJECT-STATE.md`](docs/PROJECT-STATE.md) has the current roadmap.
+The `job-radar ingest` command runs one crawl from the command line (Step 4E), and `job-radar jobs` lists the stored jobs with query-time text filters (Step 4F). [`docs/PROJECT-STATE.md`](docs/PROJECT-STATE.md) has the current roadmap.
 
 ## Technology Stack
 
@@ -79,8 +79,10 @@ make migrate                 # applies the Alembic migrations to the configured 
 | Variable | Default | Meaning |
 |---|---|---|
 | `JOB_RADAR_DATABASE_URL` | the local Docker database `jobradar` | SQLAlchemy URL; must use the `postgresql+psycopg` driver |
-| `JOB_RADAR_BOARDS_CONFIG_PATH` | `config/boards.yml` | Board configuration (ADR-0012) |
-| `JOB_RADAR_HTTP_TIMEOUT_SECONDS` | `10.0` | Bounded HTTP timeout for Greenhouse requests (ADR-0009) |
+| `JOB_RADAR_BOARDS_CONFIG_PATH` | `config/boards.yml` | Board configuration (ADR-0012); `ingest` only |
+| `JOB_RADAR_HTTP_TIMEOUT_SECONDS` | `10.0` | Bounded HTTP timeout for Greenhouse requests (ADR-0009); `ingest` only |
+
+`job-radar jobs` reads only `JOB_RADAR_DATABASE_URL`, so a missing board file or an invalid timeout does not affect it.
 
 The `POSTGRES_*` values in `.env` configure the Docker container; keep them consistent with `JOB_RADAR_DATABASE_URL`. The sample database credentials in `.env.example` are intended for local development only. Use separate, secure credentials for any deployed environment.
 
@@ -91,11 +93,23 @@ The `POSTGRES_*` values in `.env` configure the Docker container; keep them cons
 ```bash
 job-radar --version    # prints "job-radar 0.1.0"; so does job-radar with no arguments
 job-radar ingest       # crawls every enabled board in the board configuration once
+job-radar jobs         # lists the 50 most recently discovered active jobs
 ```
 
 `ingest` makes **real HTTPS requests** to the public Greenhouse Board API (`boards-api.greenhouse.io`) for each board marked `enabled: true` in `config/boards.yml`. It **writes to the configured database**: it reconciles the configured boards into `companies`, which disables any company missing from the file, and records jobs and the crawl run's outcome. Edit `config/boards.yml` to choose which boards are crawled.
 
 `ingest` takes no options and does not run migrations: run `make migrate` first. It prints a run summary on stdout and writes JSON Lines logs on stderr. It exits 0 whenever the run completes, including `partial_success` and `failed` runs. It exits 1 when settings, the board file or the database stop it. The contract is in [`docs/SPEC.md`](docs/SPEC.md), "Command-line interface".
+
+`jobs` is **read-only**: it makes no HTTP request and writes nothing, inside a read-only database transaction. Examples:
+
+```bash
+job-radar jobs --new-in-last-run                     # jobs first stored by the latest finished run
+job-radar jobs --since 2026-11-12T00:00:00Z          # first stored at or after an instant (offset required)
+job-radar jobs --location mexico --title engineer    # literal, case-insensitive substrings, combined with AND
+job-radar jobs --company duolingo --limit 200 --format jsonl
+```
+
+Filters (`--company`, `--title`, `--location`, `--department`) match literal substrings, ignoring case; accents count, so `Mexico` does not match `México`. `--limit` is 1–1000 (default 50). `--format table` (default) prints a plain-text table with stored text sanitized against terminal control and bidi characters; `--format jsonl` prints one JSON object per job on stdout and nothing else, with context on stderr. `--new-in-last-run` matches jobs to the run by timestamp, not by a stored link, so attribution is best-effort. The contract is in [`docs/SPEC.md`](docs/SPEC.md), "Job listing and query".
 
 ### Quality Checks
 
@@ -193,7 +207,7 @@ The roadmap represents planned development directions rather than committed deli
 ### Phase 4 — Search & Job Intelligence
 
 - [ ] Implement full-text job search
-- [ ] Add advanced filtering by technology, location, seniority, salary, and remote eligibility
+- [ ] Add advanced filtering by technology, location, seniority, salary, and remote eligibility (partial: literal text filters on company, title, location and department in `job-radar jobs`)
 - [ ] Extract structured skills and requirements from job descriptions
 - [ ] Introduce configurable job matching based on candidate preferences
 - [ ] Implement explainable relevance scoring

@@ -45,11 +45,27 @@ an HTTP API is actually needed.
                   (INSERT ... ON CONFLICT DO UPDATE)
 ```
 
+The read path is separate and never touches ingestion:
+
+```
+   CLI `job-radar jobs` (DatabaseSettings only; owns a read-only engine)
+                                  |
+                                  v
+         read_only_session: one REPEATABLE READ, READ ONLY transaction,
+                        always rolled back
+                                  |
+                                  v
+        JobQuery (statements only) ---> PostgreSQL (jobs, companies, crawl_runs)
+```
+
 Where each part lives:
 
 | Component | Module |
 |---|---|
-| CLI: parsing, wiring, run summary, JSON Lines logging | `job_radar.cli` |
+| CLI: parsing, wiring, run summary, job listing output, JSON Lines logging | `job_radar.cli` |
+| `JobQuery`, `JobCriteria`, `ListedJob` (read-only listing) | `job_radar.persistence.job_query` |
+| `create_read_only_engine`, `read_only_session` | `job_radar.persistence.session` |
+| `DatabaseSettings` (database URL only), `Settings` (adds board file and HTTP timeout) | `job_radar.settings` |
 | `IngestionService`, crawl summaries | `job_radar.ingestion.service`, `job_radar.ingestion.summary` |
 | `StoreFactory` and the store protocols | `job_radar.ingestion.ports` |
 | `SqlAlchemyStoreFactory` | `job_radar.persistence.ingestion_store` |
@@ -247,13 +263,14 @@ Database-managed configuration and an admin UI are out of scope for the MVP.
 Repositories never commit and never roll back. They execute statements on a
 `Session` handed to them and report what happened; the caller decides whether
 the work stands. A test enforces this by scanning the repository modules for
-`.commit()` and `.rollback()`.
+`.commit()` and `.rollback()`; another applies the same scan to the read-only
+`job_query` module.
 
 Ownership by layer:
 
 | Layer | Owns |
 |---|---|
-| CLI | the process-level session/engine lifecycle |
+| CLI | the process-level session/engine lifecycle; for `jobs`, its single read-only transaction |
 | IngestionService | **one transaction per company**, plus the run-level writes |
 | Repositories | no transaction; statements only |
 
@@ -310,7 +327,13 @@ parameters, row content or driver message text (ADR-0016 addendum).
   before writing, and a cleanup of exactly those rows.
 - The CLI's own decisions (parsing, exit codes, summary, log format, resource
   release) are unit-tested with the ingestion service replaced by a fake
-  (`tests/unit/test_cli.py`).
+  (`tests/unit/test_cli.py`), and for `jobs` with the query replaced by a
+  fake (`tests/unit/test_cli_jobs.py`).
+- The job query runs against PostgreSQL inside the rolled-back test
+  transaction (`tests/integration/test_job_query.py`). The read-only engine is
+  tested by attempting writes, which PostgreSQL must refuse. The `jobs`
+  acceptance tests in `tests/integration/test_cli_acceptance.py` read what the
+  ingest acceptance runs committed, under the same isolation.
 
 ## Current Scope
 
@@ -326,7 +349,8 @@ Future sources:
 Out of scope for the first milestone:
 
 - job deactivation
-- filtering and matching
+- inferred classification and matching (explicit text filters at query time
+  exist since Step 4F: SPEC, "Job listing and query")
 - LLM matching
 - Telegram notifications
 - frontend

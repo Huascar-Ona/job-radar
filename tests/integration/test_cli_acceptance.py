@@ -1,4 +1,4 @@
-"""Acceptance: the ingest command end to end (ADR-0010, layer 4).
+"""Acceptance: the ingest and jobs commands end to end (ADR-0010, layer 4).
 
 SPEC, "MVP Acceptance Criteria", driven through the CLI's own composition
 root, ``run_ingest``: real settings, board file, engine, HTTP client,
@@ -29,7 +29,7 @@ from sqlalchemy import Connection, Engine, create_engine, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.pool import NullPool
 
-from job_radar.cli import run_ingest
+from job_radar.cli import JobsOptions, OutputFormat, run_ingest, run_jobs
 from tests.support.clock import FixedClock
 from tests.support.pipeline import (
     SCHEMA_DB,
@@ -105,6 +105,25 @@ class Cli:
             stderr=stderr,
             transport=httpx.MockTransport(self.greenhouse.handle),
             clock=self.clock,
+        )
+        records = [json.loads(line) for line in stderr.getvalue().splitlines()]
+        return Outcome(code, stdout.getvalue(), records)
+
+    def jobs(
+        self,
+        *,
+        new_in_last_run: bool = False,
+        company: str | None = None,
+        output: OutputFormat = "table",
+    ) -> Outcome:
+        """``job-radar jobs`` through its composition root, read-only."""
+        stdout, stderr = io.StringIO(), io.StringIO()
+        code = run_jobs(
+            stdout=stdout,
+            stderr=stderr,
+            options=JobsOptions(
+                new_in_last_run=new_in_last_run, company=company, output=output
+            ),
         )
         records = [json.loads(line) for line in stderr.getvalue().splitlines()]
         return Outcome(code, stdout.getvalue(), records)
@@ -315,3 +334,97 @@ def test_every_board_failing_records_failed_and_still_exits_zero(cli: Cli) -> No
     assert all(all(f.get(name) for name in FAILURE_FIELDS) for f in failures)
     assert outcome.completion()["status"] == "failed"
     assert outcome.stdout.splitlines()[0] == f"crawl run {run_id}: failed"
+
+
+# --- SPEC, "Job listing and query" -------------------------------------------------
+
+
+def _listed(outcome: Outcome) -> list[dict[str, object]]:
+    return [json.loads(line) for line in outcome.stdout.splitlines()]
+
+
+def _context(outcome: Outcome) -> dict[str, object]:
+    [record] = [
+        r
+        for r in outcome.records
+        if r["message"] == "selected the latest finished crawl run"
+    ]
+    return record
+
+
+def test_jobs_lists_exactly_the_jobs_the_last_run_inserted(
+    cli: Cli, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cli.configure((ALPHA, "CLI Alpha"))
+    cli.greenhouse.serve(ALPHA, board(*(posting(i) for i in ALPHA_IDS)))
+    assert cli.run().code == 0
+    # Only the database URL is read: broken ingestion settings cannot matter.
+    monkeypatch.setenv("JOB_RADAR_HTTP_TIMEOUT_SECONDS", "-1")
+    monkeypatch.setenv("JOB_RADAR_BOARDS_CONFIG_PATH", str(tmp_path / "missing.yml"))
+
+    outcome = cli.jobs(new_in_last_run=True, output="jsonl")
+
+    assert outcome.code == 0
+    listed = _listed(outcome)
+    # Same first_seen_at, so the newest id, the last one inserted, comes first.
+    assert [job["source_job_id"] for job in listed] == [
+        str(i) for i in reversed(ALPHA_IDS)
+    ]
+    assert {job["company"] for job in listed} == {"CLI Alpha"}
+    assert {job["board_token"] for job in listed} == {ALPHA}
+    assert {job["first_seen_at"] for job in listed} == {
+        FIRST.isoformat(timespec="microseconds")
+    }
+    context = _context(outcome)
+    assert context["run_id"] == cli.run_id(FIRST)
+    assert (context["status"], context["new"]) == ("success", 3)
+    assert context["later_unfinished_runs"] == 0
+    assert outcome.failures() == []
+
+
+def test_jobs_after_an_unchanged_second_run_lists_nothing_new(cli: Cli) -> None:
+    cli.configure((ALPHA, "CLI Alpha"))
+    cli.greenhouse.serve(ALPHA, board(*(posting(i) for i in ALPHA_IDS)))
+    assert cli.run().code == 0
+    cli.clock.set(SECOND)
+    assert cli.run().code == 0
+
+    newest = cli.jobs(new_in_last_run=True)
+    history = cli.jobs(company=ALPHA, output="jsonl")
+
+    assert newest.code == 0
+    assert newest.stdout == (
+        f"crawl run {cli.run_id(SECOND)} (success),"
+        f" started {SECOND.isoformat(timespec='microseconds')},"
+        " 0 new jobs recorded\n"
+        "No matching jobs.\n"
+    )
+    assert history.code == 0
+    listed = _listed(history)
+    assert sorted(str(job["source_job_id"]) for job in listed) == sorted(
+        str(i) for i in ALPHA_IDS
+    )
+    assert {job["first_seen_at"] for job in listed} == {
+        FIRST.isoformat(timespec="microseconds")
+    }
+    assert {job["last_seen_at"] for job in listed} == {
+        SECOND.isoformat(timespec="microseconds")
+    }
+
+
+def test_jobs_new_in_a_partial_run_excludes_the_failing_company(cli: Cli) -> None:
+    cli.configure((ALPHA, "CLI Alpha"), (BETA, "CLI Beta"))
+    cli.greenhouse.serve(ALPHA, httpx.Response(500))
+    cli.greenhouse.serve(BETA, board(*(posting(i) for i in BETA_IDS)))
+    assert cli.run().code == 0
+
+    outcome = cli.jobs(new_in_last_run=True, output="jsonl")
+
+    assert outcome.code == 0
+    listed = _listed(outcome)
+    assert sorted(str(job["source_job_id"]) for job in listed) == sorted(
+        str(i) for i in BETA_IDS
+    )
+    assert {job["board_token"] for job in listed} == {BETA}
+    context = _context(outcome)
+    assert (context["status"], context["new"]) == ("partial_success", 2)

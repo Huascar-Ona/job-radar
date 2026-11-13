@@ -25,6 +25,87 @@ harness milestones.
 
 ---
 
+## 4F: Job listing query
+
+- **Status:** complete, 2026-11-12. Started 2026-11-12 on explicit
+  approval.
+- **Objective:** a read-only `job-radar jobs` command over the stored jobs
+  (SPEC, "Job listing and query"). Out of scope: ingestion changes, HTTP,
+  migrations, new dependencies, deactivation, classification.
+- **Phase 1, contract (read-only):** decisions D1–D15 approved, D4 and D15
+  amended by the maintainer: `--new-in-last-run` is documented as a
+  timestamp correlation (`first_seen_at = started_at`), not a recorded link;
+  `jobs` must not fail on ingestion-only settings. A1 (`jobs_new` beside the
+  listing), A2 (later unfinished runs reported) and four log fields
+  (`later_unfinished_runs`, `started_at`, `limit`, `more_available`)
+  approved.
+- **Phase 2, implementation:**
+  - `src/job_radar/settings.py`: `DatabaseSettings` (database URL only);
+    `Settings` extends it with the board file and HTTP timeout, unchanged
+    for `ingest`.
+  - `src/job_radar/persistence/job_query.py`: `JobQuery` (latest finished
+    run by highest id, later unfinished runs, the listing), `JobCriteria`,
+    `ListedJob`, `JobPage`. SQLAlchemy Core, `ILIKE` with autoescape, order
+    `first_seen_at DESC, id DESC`, limit + 1. Statements only.
+  - `src/job_radar/persistence/session.py`: `create_read_only_engine` sets
+    `REPEATABLE READ` and read-only on every new DBAPI connection;
+    `read_only_session` always rolls back. Contract refinement said
+    connection-level execution options. Reading SQLAlchemy 2.0.54 showed
+    that `pool_pre_ping` runs `SELECT 1` on a reused connection, which in
+    psycopg's non-autocommit mode opens a transaction, and psycopg refuses to
+    change these characteristics inside one. They are therefore set when the
+    connection is opened. Same contract, different mechanism; inferred from
+    the code, not observed, and covered by an integration test on a reused
+    pooled connection.
+  - `src/job_radar/cli.py`: `jobs` subcommand (mutually exclusive time
+    selectors, validated `--since` and `--limit`, non-empty filters, repeated
+    options rejected), `run_jobs`, `render_jobs_table` with
+    `display_text` sanitization (Cc, Cf, Cs, Zl, Zp), `render_jobs_jsonl`
+    (ASCII-only), context records on stderr, four new log fields. Database
+    errors are reported through `to_persistence_error` (class and SQLSTATE).
+- **Tests:** `tests/unit/test_cli_jobs.py` (parsing, selection, run context,
+  table and JSONL exact output, sanitization including a check that the
+  tests do not rely on the module's own category list, settings isolation,
+  safe errors, engine disposal, rollback without commit, no HTTP client or
+  board file). `tests/unit/test_job_query_construction.py` (criteria
+  validation, compiled SQL, the no-commit scan of `job_query`, the
+  read-only connection hook, `DatabaseSettings` and `Settings`).
+  `tests/integration/test_job_query.py` (24 tests: run selection, timestamp
+  correlation, inclusive `--since`, order and limit, `is_active`, filters,
+  wildcards, NULLs, accents, company by name or token, stored values; the
+  read-only engine's isolation level, read-only flag on a reused pooled
+  connection, and SQLSTATE 25006 for writes). Three `jobs` acceptance tests
+  in `tests/integration/test_cli_acceptance.py`.
+- **Verification (captured, 4F session; output in a session scratchpad,
+  not preserved):** Ruff lint, Ruff format (`106 files already
+  formatted`), mypy (`73 source files`): PASS. Unit: `make test-unit`,
+  exit 0, `657 passed, 242 deselected`. `git diff --check`: exit 0.
+  DOC-IMPACT: PASS. Integration: not run then, PostgreSQL access not yet
+  authorized; 242 integration tests collect. Overall: PARTIAL.
+- **Integration (captured, 2026-11-12, on the maintainer's single-use
+  authorization, now consumed):** preflight per verify-change section 4:
+  target `postgresql+psycopg` on `localhost:5432` from the built-in default,
+  configured database `jobradar` (read only, by
+  `test_database_connection.py`); destructive operations only in
+  `jobradar_schema_test` and `jobradar_migration_test`; the section 4b grep
+  matched the skill's description; connectivity probe `True`. `make
+  test-integration`: exit 0, `242 passed, 657 deselected in 7.28s`, no
+  failures, skips or warnings. That includes the 24 tests in
+  `tests/integration/test_job_query.py` and all 7 CLI acceptance tests (4
+  from 4E, 3 for `jobs`). The read-only, repeatable-read engine was verified
+  against PostgreSQL: `SHOW` reports `repeatable read` and read-only `on`,
+  also on a reused, pre-pinged pooled connection, and `INSERT`, `UPDATE` and
+  `DELETE` are refused with SQLSTATE 25006. This confirms the mechanism
+  change above, which had been inferred from the code. `git status` was
+  identical before and after; the databases were not inspected afterwards.
+- **Closing documentation:** this entry, PROJECT-STATE (4F complete, no next
+  milestone approved, `jobs` limitations and the noted grep gap under known
+  issues) and the README status line. No application code or tests changed
+  after the integration run.
+- **Commit:** `git log --format=%h -F --grep='feat(cli): add the read-only job-radar jobs command'`.
+- **Follow-up:** none required. Known limits are in PROJECT-STATE, "Known
+  issues".
+
 ## 4E: Ingestion CLI
 
 - **Status:** complete, 2026-11-12. Started 2026-11-11 on explicit

@@ -163,7 +163,7 @@ Re-read the code each time; do not trust this file's description over it:
 ```
 grep -n "_DB = " tests/conftest.py
 grep -n "CREATE DATABASE\|DROP SCHEMA\|DROP TABLE" tests/support/database.py
-grep -n "CREATE FUNCTION\|CREATE TRIGGER\|DELETE FROM\|UPDATE companies\|JOB_RADAR_DATABASE_URL" tests/conftest.py tests/support/pipeline.py tests/integration/test_ingestion_pipeline*.py tests/integration/test_cli_acceptance.py
+grep -n "CREATE FUNCTION\|CREATE TRIGGER\|DELETE FROM\|UPDATE companies\|UPDATE jobs\|JOB_RADAR_DATABASE_URL" tests/conftest.py tests/support/pipeline.py tests/integration/test_ingestion_pipeline*.py tests/integration/test_cli_acceptance.py tests/integration/test_job_query.py
 ```
 
 When this skill was written, these were:
@@ -189,6 +189,14 @@ When this skill was written, these were:
   the test, after checking the URL's database name. The CLI commits for
   real, so they follow the durability tests' rules: no enabled company, unused
   identifiers, and a `DELETE` of only their own rows.
+  Their `jobs` tests only read what those runs committed.
+- Job query tests (`tests/integration/test_job_query.py`) run in
+  `jobradar_schema_test` and assert it with `current_database()`. Query
+  tests use the always-rolled-back `session` fixture; inside it one test
+  deletes every `crawl_runs` row and another sets one job inactive, and both
+  are rolled back. The read-only tests attempt `INSERT`, `UPDATE jobs` and
+  `DELETE FROM crawl_runs` on a read-only engine; PostgreSQL must refuse
+  them (SQLSTATE 25006), and the transaction is rolled back regardless.
 - The configured database itself is used only by
   `tests/integration/test_database_connection.py`.
 

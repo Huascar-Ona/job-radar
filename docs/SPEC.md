@@ -41,6 +41,9 @@ the run row is created (approved 2026-11-10):
   the run, and their stored jobs are not modified. Disabling a board is not
   job deactivation (ADR-0004).
 
+Only `ingest` reads the board file. `job-radar jobs` reads only the database
+URL ("Job listing and query").
+
 ## Observation versus stored job
 
 These are two different things and must not be conflated.
@@ -548,13 +551,15 @@ the missing company fields when it logs them.
 
 ## Command-line interface
 
-Approved 2026-11-11 (Step 4E). The `job-radar` entry point
-(`job_radar.cli:main`) has one command and no other options:
+Approved 2026-11-11 (Step 4E); `jobs` added 2026-11-12 (Step 4F). The
+`job-radar` entry point (`job_radar.cli:main`) has two commands and no other
+options:
 
 | Invocation | Effect | Exit code |
 |---|---|---|
 | `job-radar`, `job-radar --version` | Prints `job-radar <version>` | 0 |
 | `job-radar ingest` | Runs one crawl ("Ingestion run") | see below |
+| `job-radar jobs [options]` | Lists stored jobs, read-only ("Job listing and query") | see that section |
 | Unknown command or argument | argparse usage error on stderr | 2 |
 
 `ingest` takes no arguments. Settings come from `JOB_RADAR_*` environment
@@ -610,12 +615,143 @@ any of these record fields that are present: `source`, `board_token`,
 `display_name`, `company_id`, `operation`, `source_job_id`, `outcome`,
 `persisted_company_id`, `incoming_company_id`, `error_type`, `error`,
 `run_id`, `status`, `companies_total`, `companies_succeeded`,
-`companies_failed`, `fetched`, `new`, `existing`, `updated`, `invalid`.
+`companies_failed`, `fetched`, `new`, `existing`, `updated`, `invalid`,
+`later_unfinished_runs`, `started_at`, `limit`, `more_available`.
 No other field is serialized. A value that is not a string, integer, boolean
 or null is replaced by its type name, text is bounded to 1,000 characters,
 and tracebacks are never written. The handler is attached for the duration
 of the command only, and the logger's previous handlers and level are
 restored afterwards.
+
+## Job listing and query
+
+Approved 2026-11-12 (Step 4F). `job-radar jobs` lists stored jobs. It is
+read-only: it makes no HTTP request, runs no ingestion and writes nothing.
+Selection happens at query time (ADR-0005); nothing is inferred from
+`raw_data`, and nothing is classified.
+
+```
+job-radar jobs [--new-in-last-run | --since TIMESTAMP] [--company TEXT]
+               [--title TEXT] [--location TEXT] [--department TEXT]
+               [--limit N] [--format {table,jsonl}]
+```
+
+**Settings.** `jobs` reads only `JOB_RADAR_DATABASE_URL` (environment, then
+`.env`, then the default; `DatabaseSettings`). The board file and the HTTP
+timeout are neither read nor validated, so a missing or invalid ingestion
+setting cannot stop a read. `ingest` keeps loading and validating all three.
+
+**Selection.** Only jobs with `is_active = true` are listed (every stored job
+today; see "Active state"). At most one time selector applies:
+
+- none: every active job in the stored history, most recently discovered
+  first;
+- `--since T`: jobs with `first_seen_at >= T`, inclusive. `T` is an ISO 8601
+  timestamp **with** a UTC offset or `Z`, normalized to UTC. A naive
+  timestamp, a bare date or an unparseable value is a usage error. A future
+  `T` is valid and selects nothing;
+- `--new-in-last-run`: jobs first stored by the **latest finished crawl
+  run**: the `crawl_runs` row with the highest `id` whose status is
+  `success`, `partial_success` or `failed`. Ids follow the order runs were
+  opened, independently of the clock. A run still `running`, including one
+  that aborted, is never the latest finished run.
+
+**Run attribution is a timestamp correlation.** A job belongs to the latest
+finished run when its `first_seen_at` equals that run's `started_at`. This
+holds because a run takes `observed_at` once, opens its row with it, and
+every job it inserts records it as `first_seen_at` ("Ingestion run", "Stored
+job columns"), while a failed company's job writes roll back. It is **not** a
+recorded run-to-job relationship: no column or foreign key links a job to the
+run that inserted it, and `crawl_runs.started_at` is not unique. If two runs
+ever share a `started_at`, their new jobs cannot be told apart. Attribution
+is therefore best-effort, not guaranteed. The run's own `jobs_new` counter is
+reported beside the listing, so a disagreement is visible. Consequences:
+
+- a `failed` run inserted no jobs, so it selects nothing;
+- a `partial_success` run selects only the jobs of the companies that
+  succeeded;
+- jobs committed by a later run that never finished are not attributed to
+  any run here, although the unfiltered listing includes them;
+- the latest run is global: one run crawls every enabled company of every
+  source ("Definitions"), so a future source changes nothing here.
+
+**Text filters.** `--company`, `--title`, `--location` and `--department`
+each select jobs whose field contains the given text as a literal,
+case-insensitive substring (PostgreSQL `ILIKE` with every `%`, `_` and escape
+character escaped, so they match themselves). `--company` matches the
+company's current `display_name` or its `board_token`. Filters combine with
+AND, and with the time selector. A `NULL` location or department never
+matches a filter on it. An empty filter is a usage error. Accents are
+significant (`México` does not match `Mexico`), and the case-folding of
+non-ASCII letters follows the database's locale. Jobs of disabled or removed
+companies are listed like any other: disabling is not deactivation
+(ADR-0004).
+
+**Order and limit.** `first_seen_at` descending, then the job's internal id
+descending, a total and repeatable order. `--limit N` (default 50, 1 to 1000)
+caps the output; one extra row is fetched only to report whether more
+matched. Each option may be given once; repeating one is a usage error.
+
+**Table output** (`--format table`, the default). Plain text: no colour and
+no terminal detection. Columns, separated by two spaces: `FIRST SEEN (UTC)`
+(`YYYY-MM-DD HH:MM`, 16), `COMPANY` (20), `TITLE` (40), `LOCATION` (24) and
+`URL`, which is last and never truncated. A longer cell is cut to its width
+minus three and ends in `...`; widths count code points, so wide characters
+can misalign columns. Every stored value is sanitized first: characters in
+the Unicode categories Cc (C0 and C1 controls, DEL, including ESC and the
+one-byte CSI U+009B), Cf (bidi embeddings, overrides and isolates, direction
+marks, zero-width characters, U+FEFF), Cs, Zl and Zp become spaces, runs of
+whitespace collapse to one, and a missing or blank value is `-`. Stored text
+therefore cannot move the cursor, clear the screen, start a hyperlink or
+reorder a line. The last line is `<n> job(s).` or `<n> jobs shown; more match
+(raise --limit, max 1000).`; with no rows the only line is
+`No matching jobs.` With `--new-in-last-run` the table is preceded by
+`crawl run <id> (<status>), started <ISO 8601>, <n> new job(s) recorded`,
+where `<n>` is the run's `jobs_new`, and, when later runs did not finish, by
+`note: <k> later run(s) did not finish (status running); jobs they stored
+are not included here.` Without a finished run the output is
+`No finished crawl run.` and that note, if any.
+
+**JSON Lines output** (`--format jsonl`). stdout carries one JSON object per
+job and nothing else; no rows means empty stdout. Objects are encoded
+ASCII-only, so every control, bidi and other non-ASCII character is escaped
+and the bytes written are printable ASCII; a consumer decodes the original
+text and is responsible for displaying it safely. Fields, in this order:
+
+| Field | Type |
+|---|---|
+| `source`, `source_job_id`, `company` (current `display_name`), `board_token`, `title`, `job_url` | string |
+| `location`, `department`, `apply_url` | string or null |
+| `source_published_at`, `source_updated_at` | string or null |
+| `first_seen_at`, `last_seen_at` | string |
+| `is_active` | boolean |
+
+Timestamps are UTC ISO 8601 with microseconds and `+00:00`
+(`2026-11-12T18:04:11.123456+00:00`), so a `first_seen_at` can be passed
+back to `--since`. Internal ids, `description`, `raw_data` and content hashes
+are never output.
+
+**Context on stderr.** Both formats log, as JSON Lines on stderr ("Log
+output"): with `--new-in-last-run`, one INFO record, either
+`no finished crawl run` with `later_unfinished_runs`, or
+`selected the latest finished crawl run` with `run_id`, `status`,
+`started_at`, `new` and `later_unfinished_runs`; then one INFO record
+`listed <n> jobs` with `limit` and `more_available`.
+
+**Exit codes.** 0 when the query ran, including when it selected nothing or
+no finished run exists; 1 for invalid settings, an unusable database URL or a
+database error, reported as one `ERROR` record from `job_radar.cli` carrying
+`operation` (`load_settings`, `create_engine` or `query_jobs`), `error_type`
+and a safe `error`; 2 for usage errors, before any setting is read. A
+database error is reported by its exception class and SQLSTATE only, never
+by SQL, parameters, the database URL or driver text. Any other exception
+propagates.
+
+**Transaction.** The command opens one engine whose connections are
+`REPEATABLE READ, READ ONLY`, and runs its statements in one transaction. The
+run it selects and the jobs it lists therefore come from one snapshot, and
+PostgreSQL refuses any write (SQLSTATE 25006). The transaction is rolled back
+and the engine disposed whether the query succeeded or not.
 
 ## MVP Acceptance Criteria
 
@@ -666,7 +802,8 @@ The MVP does not include:
 - Lever
 - Ashby
 - job deactivation
-- role, seniority or geography filtering
+- inferred role, seniority or geography classification (explicit text
+  filters at query time are specified in "Job listing and query")
 - LLM matching
 - Telegram notifications
 - frontend
