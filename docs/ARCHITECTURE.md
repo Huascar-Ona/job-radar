@@ -18,7 +18,7 @@ an HTTP API is actually needed.
 ## Initial Architecture
 
 ```
-            CLI (entry point; the ingestion command is planned, Step 4E)
+        CLI `job-radar ingest` (composition root; owns engine and HTTP client)
                                   |
                                   v
                           IngestionService
@@ -49,6 +49,7 @@ Where each part lives:
 
 | Component | Module |
 |---|---|
+| CLI: parsing, wiring, run summary, JSON Lines logging | `job_radar.cli` |
 | `IngestionService`, crawl summaries | `job_radar.ingestion.service`, `job_radar.ingestion.summary` |
 | `StoreFactory` and the store protocols | `job_radar.ingestion.ports` |
 | `SqlAlchemyStoreFactory` | `job_radar.persistence.ingestion_store` |
@@ -301,8 +302,15 @@ parameters, row content or driver message text (ADR-0016 addendum).
   failures are injected by temporary PostgreSQL triggers created in that
   transaction. Two durability tests commit for real, on identifiers no other
   test uses, and delete exactly those rows afterwards.
-- Acceptance tests will drive the CLI end to end with stubbed HTTP and a real
-  database. None exist yet; they are planned with the ingestion command.
+- Acceptance tests drive the ingest command end to end through
+  `job_radar.cli.run_ingest`, with only the HTTP transport stubbed and the
+  clock fixed, against the schema test database
+  (`tests/integration/test_cli_acceptance.py`). The CLI commits for real, so
+  they use the durability tests' isolation: unique identifiers, a check
+  before writing, and a cleanup of exactly those rows.
+- The CLI's own decisions (parsing, exit codes, summary, log format, resource
+  release) are unit-tested with the ingestion service replaced by a fake
+  (`tests/unit/test_cli.py`).
 
 ## Current Scope
 

@@ -13,7 +13,7 @@ The project emphasizes reliable data ingestion, explicit domain boundaries, data
 
 The current implementation provides the domain model, PostgreSQL persistence and migrations, the Greenhouse collector and normalizer, and an ingestion service that orchestrates a crawl run: it reconciles configured boards, crawls each enabled company in its own transaction, isolates per-company failures and records crawl outcomes.
 
-The ingestion service is not yet executable from the command line. The ingestion CLI command is planned; [`docs/PROJECT-STATE.md`](docs/PROJECT-STATE.md) has the current roadmap. The current CLI displays the installed application version.
+The `job-radar ingest` command runs one crawl from the command line (Step 4E). [`docs/PROJECT-STATE.md`](docs/PROJECT-STATE.md) has the current roadmap.
 
 ## Technology Stack
 
@@ -56,28 +56,46 @@ Additional architectural decisions are documented in [`docs/ARCHITECTURE.md`](do
 
 ### Requirements
 
-- Python 3.13
-- Docker with Docker Compose
-- Make
+The commands below are for a bash or zsh shell on macOS or Linux.
+
+- **Python 3.13** (ADR-0001). `make install` creates the virtual environment with `python3.13` from your `PATH`. If it is elsewhere, pass it explicitly: `make install PYTHON=/path/to/python3.13`. If it is missing, the Makefile suggests `uv python install 3.13`.
+- **Docker with Docker Compose**, for the local PostgreSQL 17 instance in `docker-compose.yml`.
+- **Make**.
 
 ### Installation
 
 ```bash
-cp .env.example .env
-make install
-make up
-make migrate
+cp .env.example .env         # local settings; .env is gitignored
+make install                 # creates .venv and runs: pip install -e ".[dev]"
+source .venv/bin/activate    # optional; the Makefile calls .venv/bin directly
+make up                      # starts PostgreSQL in Docker and waits until it is healthy
+make migrate                 # applies the Alembic migrations to the configured database
 ```
 
-The sample database credentials in `.env.example` are intended for local development only. Use separate, secure credentials for any deployed environment.
+`make install` installs the project in editable mode with its development tools. The editable install creates the `job-radar` console script (`.venv/bin/job-radar`, declared in `pyproject.toml`) and makes changes under `src/` take effect without reinstalling. After `source .venv/bin/activate`, `job-radar` is on your `PATH`; without activating, call `.venv/bin/job-radar`.
 
-### Run the Current CLI
+**Configuration.** Settings are read from `JOB_RADAR_*` environment variables, falling back to `.env`, then to built-in defaults that match `docker-compose.yml`:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `JOB_RADAR_DATABASE_URL` | the local Docker database `jobradar` | SQLAlchemy URL; must use the `postgresql+psycopg` driver |
+| `JOB_RADAR_BOARDS_CONFIG_PATH` | `config/boards.yml` | Board configuration (ADR-0012) |
+| `JOB_RADAR_HTTP_TIMEOUT_SECONDS` | `10.0` | Bounded HTTP timeout for Greenhouse requests (ADR-0009) |
+
+The `POSTGRES_*` values in `.env` configure the Docker container; keep them consistent with `JOB_RADAR_DATABASE_URL`. The sample database credentials in `.env.example` are intended for local development only. Use separate, secure credentials for any deployed environment.
+
+**PostgreSQL.** `make up` runs `docker compose up -d --wait`; `make down` stops the container and keeps its data volume. To use a PostgreSQL server you already run instead, point `JOB_RADAR_DATABASE_URL` at it and skip `make up`. Neither the CLI nor `make migrate` creates the database itself.
+
+### Run the CLI
 
 ```bash
-.venv/bin/job-radar
+job-radar --version    # prints "job-radar 0.1.0"; so does job-radar with no arguments
+job-radar ingest       # crawls every enabled board in the board configuration once
 ```
 
-The current command displays the application version. End-to-end ingestion commands are planned.
+`ingest` makes **real HTTPS requests** to the public Greenhouse Board API (`boards-api.greenhouse.io`) for each board marked `enabled: true` in `config/boards.yml`. It **writes to the configured database**: it reconciles the configured boards into `companies`, which disables any company missing from the file, and records jobs and the crawl run's outcome. Edit `config/boards.yml` to choose which boards are crawled.
+
+`ingest` takes no options and does not run migrations: run `make migrate` first. It prints a run summary on stdout and writes JSON Lines logs on stderr. It exits 0 whenever the run completes, including `partial_success` and `failed` runs. It exits 1 when settings, the board file or the database stop it. The contract is in [`docs/SPEC.md`](docs/SPEC.md), "Command-line interface".
 
 ### Quality Checks
 
@@ -149,14 +167,14 @@ The roadmap represents planned development directions rather than committed deli
 
 - [x] Implement the Greenhouse job board collector
 - [x] Introduce configurable job board definitions
-- [ ] Connect collectors to the persistence layer through an executable ingestion pipeline (in progress: the ingestion service is implemented and unit-tested; the executable CLI command is pending)
-- [ ] Implement CLI commands for manual collection and ingestion
+- [x] Connect collectors to the persistence layer through an executable ingestion pipeline
+- [x] Implement CLI commands for manual collection and ingestion (`job-radar ingest`)
 - [ ] Add Lever and Ashby job board integrations
 - [ ] Implement configurable crawling schedules
 - [ ] Add retry policies with exponential backoff and jitter
 - [ ] Introduce rate limiting and concurrency controls
 - [ ] Extend handling of partial failures and degraded API responses (partial: per-company failure isolation, `partial_success` runs and a board completeness check are implemented)
-- [ ] Implement structured logging and crawl diagnostics (partial: structured log fields and persisted per-company crawl results are implemented; log output configuration is pending)
+- [ ] Implement structured logging and crawl diagnostics (partial: structured log fields, persisted per-company crawl results and JSON Lines log output from the CLI are implemented)
 - [ ] Add crawl execution metrics and operational reporting
 - [ ] Support incremental collection and checkpoint recovery
 

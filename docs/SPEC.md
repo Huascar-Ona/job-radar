@@ -527,9 +527,11 @@ Counting rules (approved 2026-11-10):
   model").
 
 **Process exit code is intentionally unresolved.** The MVP exits 0 for
-`success`, `partial_success` and `failed` alike. Only an unhandled crash
-produces a non-zero exit. Making partial failure non-zero is a separate
-decision to be taken when a scheduler consumes the exit code.
+`success`, `partial_success` and `failed` alike. Only a run that does not
+complete exits non-zero: a settings, board-configuration or persistence
+failure that stops the command, or an unhandled crash (see "Command-line
+interface"). Making partial failure non-zero is a separate decision to be
+taken when a scheduler consumes the exit code.
 
 ## Structured logging
 
@@ -543,6 +545,77 @@ Domain errors expose part of this context through `log_context()`
 (`CollectorError` reports the board token under `company`;
 `NormalizationError` carries no company at all). The ingestion service adds
 the missing company fields when it logs them.
+
+## Command-line interface
+
+Approved 2026-11-11 (Step 4E). The `job-radar` entry point
+(`job_radar.cli:main`) has one command and no other options:
+
+| Invocation | Effect | Exit code |
+|---|---|---|
+| `job-radar`, `job-radar --version` | Prints `job-radar <version>` | 0 |
+| `job-radar ingest` | Runs one crawl ("Ingestion run") | see below |
+| Unknown command or argument | argparse usage error on stderr | 2 |
+
+`ingest` takes no arguments. Settings come from `JOB_RADAR_*` environment
+variables or `.env`: `JOB_RADAR_DATABASE_URL`, `JOB_RADAR_BOARDS_CONFIG_PATH`
+and `JOB_RADAR_HTTP_TIMEOUT_SECONDS`. It does not run migrations; the schema
+must already be at head (`make migrate`).
+
+In order, `ingest`:
+
+1. loads settings and the board file ("Configuration"), before creating any
+   database engine or HTTP client, so an invalid file costs no connection and
+   no request;
+2. creates the engine, session factory and one HTTP client with the bounded
+   timeout, and wires the Greenhouse collector and normalizer into the
+   ingestion service with the system clock;
+3. runs the service once, then releases the client and disposes of the
+   engine, whether the run completed or not.
+
+**Exit codes.**
+
+| Outcome | stdout | Exit code |
+|---|---|---|
+| The run completed: `success`, `partial_success` or `failed` | The run summary | 0 |
+| Invalid settings, or an unusable database URL | Nothing | 1 |
+| Board file missing, unreadable or invalid (`BoardConfigError`) | Nothing | 1 |
+| `PersistenceError` raised out of the run (reconciling, opening or finishing the run, or recording a company failure) | Nothing | 1 |
+| Any other exception, including a source with no collector wired (`ValueError`) | Nothing | Non-zero; the exception propagates with its traceback |
+
+A failure that exits 1 is reported as one `ERROR` log record from
+`job_radar.cli` carrying `operation`, `error_type` and a safe `error`. For a
+persistence failure the message says whether a run row was opened: a
+reconciliation failure opens none; any later one may leave it `running`
+("Crawl outcome model"). Settings are reported by field name and validation
+type, never by value, and an unusable database URL only by its exception
+class, because the URL carries a password.
+
+**Run summary.** On a completed run, stdout carries only fields the service
+reports, in its order:
+
+```
+crawl run <id>: <status>
+observed at: <ISO 8601>
+finished at: <ISO 8601>
+companies: <n> total, <n> succeeded, <n> failed
+  <status> <source>/<board_token> (<display_name>): fetched=<n> new=<n> existing=<n> updated=<n> invalid=<n>[; <error_type>: <error_message>]
+totals: fetched=<n> new=<n> existing=<n> updated=<n> invalid=<n>
+```
+
+**Log output.** Log records go to stderr as JSON Lines, one object per line,
+for the `job_radar` loggers at INFO and above. Third-party loggers are not
+captured. Each object has `time` (UTC), `level`, `logger` and `message`, plus
+any of these record fields that are present: `source`, `board_token`,
+`display_name`, `company_id`, `operation`, `source_job_id`, `outcome`,
+`persisted_company_id`, `incoming_company_id`, `error_type`, `error`,
+`run_id`, `status`, `companies_total`, `companies_succeeded`,
+`companies_failed`, `fetched`, `new`, `existing`, `updated`, `invalid`.
+No other field is serialized. A value that is not a string, integer, boolean
+or null is replaced by its type name, text is bounded to 1,000 characters,
+and tracebacks are never written. The handler is attached for the duration
+of the command only, and the logger's previous handlers and level are
+restored afterwards.
 
 ## MVP Acceptance Criteria
 

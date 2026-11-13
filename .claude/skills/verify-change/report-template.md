@@ -65,7 +65,8 @@ remediation the user can run.>
 - Approval consumed: <yes, by the run above (result <status>) | no: not run>
 
 ### Not verified
-- Acceptance tests (ADR-0010 layer 4): none exist in the repository.
+- Acceptance tests (ADR-0010 layer 4): `tests/integration/test_cli_acceptance.py`
+  runs only within INTEGRATION; not verified unless INTEGRATION ran.
 - <skipped/xfailed tests, stale-venv risk, non-required checks skipped, ...>
 
 ### Side effects

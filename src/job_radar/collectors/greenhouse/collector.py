@@ -52,12 +52,18 @@ _CATEGORY: Final = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
 _MAX_QUOTED_TOTAL: Final = 10**9
 
 
-def create_client(*, timeout_seconds: float) -> httpx.Client:
+def create_client(
+    *, timeout_seconds: float, transport: httpx.BaseTransport | None = None
+) -> httpx.Client:
     """Build an HTTP client with a bounded timeout and an identifying agent.
 
     The timeout covers connect, read, write and pool: a board that accepts the
     connection and then says nothing must cost one timeout, not the run
     (ADR-0009).
+
+    ``transport`` is for tests that stub HTTP while keeping the production
+    timeout and headers. ``None``, the default, is httpx's own network
+    transport.
     """
     if timeout_seconds <= 0:
         msg = f"timeout must be positive, got {timeout_seconds!r}"
@@ -69,6 +75,7 @@ def create_client(*, timeout_seconds: float) -> httpx.Client:
     return httpx.Client(
         timeout=httpx.Timeout(timeout_seconds),
         headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
+        transport=transport,
     )
 
 

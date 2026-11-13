@@ -60,3 +60,17 @@ unchanged.
   crash does the same. No `interrupted` status and no recovery mechanism are
   introduced yet. Consumers of `crawl_runs` must not assume every run reaches
   a terminal status.
+
+## Addendum, 2026-11-11: exit code of a run that does not complete
+
+Approved with the ingestion CLI (Step 4E; SPEC, "Command-line interface").
+The decision above is unchanged: `success`, `partial_success` and `failed`
+all exit 0, and whether partial failure should be non-zero is still
+deferred.
+
+"Only an unhandled crash exits non-zero" is made precise. Non-zero means the
+run did not complete. The CLI catches the failures the contract documents,
+invalid settings, an invalid board file and a `PersistenceError` raised out
+of the run, and reports each as one safe log record with exit code 1, rather
+than a traceback that could quote a database URL. Every other exception
+still propagates as a crash. No status-based exit code is introduced.

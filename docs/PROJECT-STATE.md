@@ -4,7 +4,7 @@ Entry point for recovering where Job Radar stands. A snapshot, not a source
 of truth: confirm every claim against Git and the code before acting on it.
 History is in [`DEVELOPMENT-LOG.md`](DEVELOPMENT-LOG.md).
 
-**Last updated:** 2026-11-11, in the H-005 commit. This file
+**Last updated:** 2026-11-12, at 4E's completion (uncommitted until the 4E commit). This file
 describes the tree of the commit that last changed it
 (`git log -1 --format='%h %ad' --date=short -- docs/PROJECT-STATE.md`). Later
 commits are not reflected; read them. Uncommitted changes to this file
@@ -12,9 +12,9 @@ describe the working tree, not HEAD.
 
 ## Current milestone
 
-**None in progress.** Last completed: **H-005**, Context Retrieval
-Efficiency. Next planned: **4E**, Ingestion CLI, which needs approval to
-start. Its scope is below.
+**None in progress.** Last completed: **4E**, Ingestion CLI. No next
+milestone has been approved or scoped; agree it with the maintainer before
+starting one.
 
 ## Roadmap
 
@@ -23,36 +23,20 @@ start. Its scope is below.
 | 1 | H-004b, Project Traceability & Context Handoff | complete |
 | 2 | 4D-5, Lone-surrogate Unicode validation | complete |
 | 3 | H-005, Context Retrieval Efficiency | complete |
-| 4 | 4E, Ingestion CLI | planned (next) |
+| 4 | 4E, Ingestion CLI | complete |
 
 Each step starts only with explicit approval. The order was agreed with the
 maintainer on 2026-11-11; it is not recorded anywhere else in the repository.
-
-### Scope of open milestones
-
-**4E, Ingestion CLI.**
-- Objective: make the existing ingestion service executable from the
-  `job-radar` entry point (`pyproject.toml`, `src/job_radar/cli.py`),
-  following the existing contracts:
-  - the CLI owns the process-level engine and session lifecycle (ARCHITECTURE,
-    "Transaction ownership");
-  - a run follows SPEC "Ingestion run" with configuration from SPEC
-    "Configuration" (ADR-0012);
-  - exit code 0 for `success`, `partial_success` and `failed` alike; only an
-    unhandled crash is non-zero (SPEC, "Run reporting"; ADR-0008);
-  - acceptance tests drive the CLI end to end with stubbed HTTP and a real
-    database (ADR-0010; ARCHITECTURE, "Testing boundaries").
-- Not yet specified anywhere: the command's name, arguments and output.
-  Decide them in 4E; nothing here defines them.
-- Out of scope: refactoring the ingestion service, collectors or persistence
-  beyond what the CLI needs; new sources (Lever, Ashby); a non-zero exit
-  policy for partial failure (a separate decision, SPEC); scheduling, retries
-  and concurrency.
+Nothing is planned after it.
 
 ## Completed milestones
 
 Most recent first. Commits and evidence are in `DEVELOPMENT-LOG.md`.
 
+- **4E**: `job-radar ingest`, the CLI composition root over the ingestion
+  service, with a stdout run summary, JSON Lines logs on stderr and
+  end-to-end acceptance tests (SPEC, "Command-line interface")
+  (`git log --format=%h -F --grep='feat(cli): add the job-radar ingest command'`)
 - **H-005**: context freshness rules, milestone scope in this file, volatile
   claims removed from docs and checked by DOC-IMPACT
   (`git log --format=%h -F --grep='feat(harness): improve context freshness and retrieval'`)
@@ -74,21 +58,26 @@ Most recent first. Commits and evidence are in `DEVELOPMENT-LOG.md`.
 
 | Evidence | What | Provenance |
 |---|---|---|
+| Lint, format, mypy, 578 unit tests: PASS; DOC-IMPACT: PASS | 4E tree, after the closing documentation edits, before commit | Captured by verify-change, 2026-11-12 (DEVELOPMENT-LOG, 4E). The output files were in a session scratchpad and are not preserved |
+| `make test-integration`, exit 0: 215 integration tests passed, including the 4 CLI acceptance tests | 4E tree, before the closing documentation edits (application code and tests identical to the commit) | Captured by verify-change, 2026-11-12, on the maintainer's single-use authorization (DEVELOPMENT-LOG, 4E). The output file was in a session scratchpad and is not preserved |
 | Lint, format, mypy, 538 unit tests: PASS; integration SKIPPED (docs/harness scope); DOC-IMPACT: PASS | H-005 tree, before commit (no application code or tests changed since 4D-5) | Captured by verify-change, 2026-11-11 (DEVELOPMENT-LOG, H-005). The output files were in a session scratchpad and are not preserved |
 | Lint, format, mypy: PASS; 538 unit and 211 integration tests passed; DOC-IMPACT: PASS; overall PASS | 4D-5 tree, before commit (code and tests identical to the commit) | Captured by verify-change, 2026-11-11 (DEVELOPMENT-LOG, 4D-5). The output files were in a session scratchpad and are not preserved |
 | Lint, format, mypy, 483 unit tests: PASS; integration SKIPPED (docs/harness scope) | H-004b tree, before commit | Captured by verify-change, 2026-11-11 (DEVELOPMENT-LOG, H-004b). The output files were in a session scratchpad and are not preserved |
 | 483 unit and 209 integration tests: PASS; lint, format, mypy, DOC-IMPACT: PASS | `62265ac` (4D-4) | Reported by the maintainer; no output is preserved in the repository |
 | 284 tests passing | `63df80c` (Step 3) | Commit message |
 
-No continuous integration exists. The last recorded integration run is 4D-5's.
+No continuous integration exists. The last recorded integration run is 4E's.
 A count above is not evidence for any later tree: run `verify-change`.
 
 ## Known issues and open questions
 
 - **Open question:** should the content hash cover `raw_data`? ADR-0011's
   erratum says answering it needs a new ADR.
-- **No acceptance tests exist** (ADR-0010 layer 4). They are planned with the
-  ingestion CLI (4E).
+- **An interrupted `ingest` can leave a crawl run `running`** (ADR-0008
+  addendum, 2026-11-10). There is no `interrupted` status or recovery yet.
+- **`docs/DECISIONS/README.md` describes errata but not the dated addenda**
+  that ADR-0004, 0006, 0008 and 0016 carry. The 4E addendum to ADR-0008 was
+  accepted as written; the policy text is unchanged.
 - **verify-change and project-handoff are followed, not enforced.** Nothing
   stops an agent from skipping them, or from leaving this file stale.
 

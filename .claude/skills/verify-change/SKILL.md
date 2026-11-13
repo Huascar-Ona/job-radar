@@ -163,7 +163,7 @@ Re-read the code each time; do not trust this file's description over it:
 ```
 grep -n "_DB = " tests/conftest.py
 grep -n "CREATE DATABASE\|DROP SCHEMA\|DROP TABLE" tests/support/database.py
-grep -n "CREATE FUNCTION\|CREATE TRIGGER\|DELETE FROM\|UPDATE companies" tests/conftest.py tests/support/pipeline.py tests/integration/test_ingestion_pipeline*.py
+grep -n "CREATE FUNCTION\|CREATE TRIGGER\|DELETE FROM\|UPDATE companies\|JOB_RADAR_DATABASE_URL" tests/conftest.py tests/support/pipeline.py tests/integration/test_ingestion_pipeline*.py tests/integration/test_cli_acceptance.py
 ```
 
 When this skill was written, these were:
@@ -184,6 +184,11 @@ When this skill was written, these were:
   `tests/support/pipeline.py`). The two durability tests commit for real, but
   only after checking that no company is enabled and that their identifiers
   are unused, and then `DELETE` only the rows carrying those identifiers.
+- CLI acceptance tests (`tests/integration/test_cli_acceptance.py`) point
+  the CLI at `jobradar_schema_test` by setting `JOB_RADAR_DATABASE_URL` for
+  the test, after checking the URL's database name. The CLI commits for
+  real, so they follow the durability tests' rules: no enabled company, unused
+  identifiers, and a `DELETE` of only their own rows.
 - The configured database itself is used only by
   `tests/integration/test_database_connection.py`.
 

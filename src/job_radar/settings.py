@@ -35,5 +35,5 @@ class Settings(BaseSettings):
     http_timeout_seconds: float = Field(
         default=10.0,
         gt=0,
-        description="Bounded HTTP timeout (ADR-0009). Unused until a collector exists.",
+        description="Bounded HTTP timeout for the collector's client (ADR-0009).",
     )

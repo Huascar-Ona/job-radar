@@ -25,7 +25,8 @@ def test_http_timeout_is_bounded() -> None:
 
 
 def test_cli_entry_point_succeeds() -> None:
-    assert main() == 0
+    # An explicit empty argv: under pytest, sys.argv holds pytest's arguments.
+    assert main([]) == 0
 
 
 def test_version_is_exposed() -> None:

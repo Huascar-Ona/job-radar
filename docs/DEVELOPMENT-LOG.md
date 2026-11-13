@@ -25,6 +25,94 @@ harness milestones.
 
 ---
 
+## 4E: Ingestion CLI
+
+- **Status:** complete, 2026-11-12. Started 2026-11-11 on explicit
+  approval.
+- **Objective:** make the ingestion service executable as `job-radar ingest`,
+  following SPEC, ARCHITECTURE "Transaction ownership", ADR-0008, ADR-0010 and
+  ADR-0012. Out of scope: refactors, new sources, retries, scheduling,
+  concurrency, non-zero exit for partial failure, new dependencies.
+- **Phase 1, contract design (read-only):** found that nothing configured
+  logging, so in a real process the service's INFO completion record and all
+  `extra` fields were lost (SPEC "Structured logging" was unmet). Proposed
+  decisions D1–D8; the maintainer approved them with amendments: keep
+  `job-radar` with no arguments printing the version (D2), and put the test
+  seams on an internal function, not on `main` (D7).
+- **Phase 2, implementation:**
+  - `src/job_radar/cli.py`: argparse parser (`ingest`, `--version`);
+    `run_ingest(stdout, stderr, transport=None, clock=None)` as the
+    composition root; `render_summary`; `JsonLinesFormatter` with an
+    allowlist of fields; `structured_logging` context manager, attached to
+    the `job_radar` logger only and restored on exit. Settings and the board
+    file load before any engine or client exists. Exits 1 on settings,
+    board-file and `PersistenceError` failures. Other exceptions propagate.
+  - `create_client` takes an optional `transport` (default `None`, httpx's
+    network transport), so tests stub HTTP and keep production timeout and
+    headers.
+  - SPEC "Command-line interface" (approved 2026-11-11) and an amended
+    exit-code paragraph in "Run reporting". ARCHITECTURE, README and the
+    `http_timeout_seconds` description updated.
+  - Found by the first verify-change DOC-IMPACT review, then fixed:
+    ADR-0008 gains a 2026-11-11 addendum ("only an unhandled crash exits
+    non-zero" now means a run that does not complete); PROJECT-STATE's 4E
+    scope repeated the old wording. verify-change section 4b now greps and
+    describes the CLI acceptance tests, which commit to
+    `jobradar_schema_test`, and its report template no longer says no
+    acceptance tests exist.
+- **Tests:** `tests/unit/test_cli.py` (39 tests: parsing, `main(["ingest"])`
+  through the real `run_ingest` on the process streams, exit codes for each
+  run status, wiring, summary, settings, board-file, database-URL and
+  persistence failures, crash propagation, engine and client release, log
+  allowlist, traceback suppression, handler restore). One new collector unit
+  test for the injected transport. `test_cli_entry_point_succeeds` now calls
+  `main([])`: under pytest, `main()` would parse pytest's own argv.
+  `tests/integration/test_cli_acceptance.py` (4 tests, SPEC "MVP Acceptance
+  Criteria" plus the all-boards-failing exit code). They use the durability
+  tests' isolation on `jobradar_schema_test`.
+- **Pre-integration review (2026-11-12):** the ADR-0008 addendum and the
+  verify-change edits were reviewed and accepted as written. Found that
+  `main(["ingest"])` was tested only with `run_ingest` stubbed; added the two
+  entry-point unit tests above.
+- **Closing documentation (2026-11-12):** README setup instructions (Python
+  3.13, virtual environment, `make install` as an editable install exposing
+  `job-radar`, configuration, PostgreSQL, migrations, CLI usage, and that
+  `ingest` makes real requests to enabled Greenhouse boards and writes to the
+  configured database); the stale timeout comment in `.env.example`; this
+  entry and PROJECT-STATE.
+- **Verification (captured, 4E session; output in a session scratchpad,
+  not preserved):** first run FAIL on DOC-IMPACT only (the four findings
+  above). Second run, after those fixes: Ruff lint, Ruff format, mypy
+  (`69 source files`): PASS. Unit: `make test-unit`, exit 0, `576 passed,
+  215 deselected`. DOC-IMPACT: PASS. Integration: BLOCKED, because the
+  maintainer has not yet authorized PostgreSQL access. The acceptance tests
+  have never run. Overall: PARTIAL. Third run, after the pre-integration
+  review added two entry-point unit tests: lint, format, mypy (`69 source
+  files`) PASS; unit exit 0, `578 passed, 215 deselected`; integration not
+  run.
+- **Integration (captured, 2026-11-12, on the maintainer's single-use
+  authorization, now consumed):** preflight per verify-change section 4:
+  target `postgresql+psycopg` on `localhost:5432` from the built-in default
+  (no `.env`, variable unset), configured database `jobradar`; test
+  databases `jobradar_schema_test` and `jobradar_migration_test`, the only
+  ones `CREATE DATABASE` and `DROP SCHEMA public CASCADE` touch; `jobradar`
+  itself only receives `SELECT`s; connectivity probe `True`. `make
+  test-integration`: exit 0, `215 passed, 578 deselected in 7.85s`, no
+  failures, skips or warnings. All four acceptance tests in
+  `tests/integration/test_cli_acceptance.py` passed. `git status` was
+  identical before and after; the databases were not inspected afterwards,
+  which would have exceeded the authorization.
+- **Final non-database run (captured, after the closing documentation):**
+  Ruff lint, Ruff format, mypy (`69 source files`): PASS. Unit: `make
+  test-unit`, exit 0, `578 passed, 215 deselected`. DOC-IMPACT: PASS.
+  `git diff --check`: exit 0. Integration was not rerun: after it, only
+  README, PROJECT-STATE, this entry and a comment in `.env.example` (which
+  no code reads) changed, so its evidence still covers the code and tests.
+  Only this bullet changed after the run.
+- **Commit:** `git log --format=%h -F --grep='feat(cli): add the job-radar ingest command'`.
+- **Follow-up:** none required. Known limits are in PROJECT-STATE, "Known
+  issues".
+
 ## H-005: Context Retrieval Efficiency
 
 - **Status:** complete, 2026-11-11.

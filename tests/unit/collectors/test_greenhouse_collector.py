@@ -672,6 +672,23 @@ def test_create_client_rejects_an_unbounded_timeout(timeout: float) -> None:
         create_client(timeout_seconds=timeout)
 
 
+def test_create_client_uses_an_injected_transport_with_production_settings() -> None:
+    seen: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"jobs": [], "meta": {"total": 0}})
+
+    with create_client(
+        timeout_seconds=2.5, transport=httpx.MockTransport(handle)
+    ) as client:
+        assert GreenhouseCollector(client).fetch_jobs(board_token=BOARD) == []
+        assert client.timeout.read == 2.5
+
+    [request] = seen
+    assert "job-radar" in request.headers["user-agent"].lower()
+
+
 def test_default_client_has_no_infinite_timeout() -> None:
     # Guards the guard: httpx defaults to 5s, but an explicit None anywhere
     # would mean "wait forever" and silently defeat failure isolation.
