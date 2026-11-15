@@ -3,7 +3,7 @@
   "milestone": "4G",
   "as_of": "2026-11-13T03:08:34.976000+00:00",
   "boundary": {
-    "status": "inferred",
+    "status": "reviewed",
     "basis": [
       "commit_time"
     ]
@@ -85,7 +85,6 @@
   "data_gaps": [
     "billing_not_recorded_locally",
     "cost_estimate_unavailable",
-    "escaped_defects_not_checked",
-    "boundary_inferred_not_reviewed"
+    "escaped_defects_not_checked"
   ]
 }

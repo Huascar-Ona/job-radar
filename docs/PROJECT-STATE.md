@@ -4,7 +4,7 @@ Entry point for recovering where Job Radar stands. A snapshot, not a source
 of truth: confirm every claim against Git and the code before acting on it.
 History is in [`DEVELOPMENT-LOG.md`](DEVELOPMENT-LOG.md).
 
-**Last updated:** 2026-11-13, during H1 (uncommitted until the H1 commit). This file
+**Last updated:** 2026-11-14, after H1 (`f3f58ca`), at 4H contract approval. This file
 describes the tree of the commit that last changed it
 (`git log -1 --format='%h %ad' --date=short -- docs/PROJECT-STATE.md`). Later
 commits are not reflected; read them. Uncommitted changes to this file
@@ -12,11 +12,12 @@ describe the working tree, not HEAD.
 
 ## Current milestone
 
-**H1, Agent Observability & Efficiency: implemented, awaiting review**
-(approved 2026-11-13). All five phases are done and verified without the
-database (none is needed); the milestone boundaries it reports for 4E–4G are
-inferred and await the maintainer's review. Last completed: **4G**,
-Deactivation on verified absence.
+**4H, Crawl Run Reporting: contract approved** (direction approved
+2026-11-13, contract and protocol 2026-11-14). A read-only `job-radar runs` command (README Roadmap, Phase 2:
+"Add crawl execution metrics and operational reporting"), to be implemented
+as H2 Experiment 001, the first controlled agent-evaluation run. Nothing is
+implemented yet. Last completed: **H1** (harness, `f3f58ca`); last product
+milestone: **4G**.
 
 ## Roadmap
 
@@ -28,33 +29,43 @@ Deactivation on verified absence.
 | 4 | 4E, Ingestion CLI | complete |
 | 5 | 4F, Job listing query (`job-radar jobs`) | complete |
 | 6 | 4G, Deactivation on verified absence | complete |
-| 7 | H1, Agent Observability & Efficiency | implemented, awaiting review |
+| 7 | H1, Agent Observability & Efficiency | complete |
+| 8 | 4H, Crawl Run Reporting (H2 Experiment 001) | contract approved; held-out tests next |
 
 Each step starts only with explicit approval. Steps 1–4 were agreed with the
-maintainer on 2026-11-11, 4F and 4G on 2026-11-12, H1 on 2026-11-13; the
-order is not recorded anywhere else in the repository. Nothing is planned
-after H1.
+maintainer on 2026-11-11, 4F and 4G on 2026-11-12, H1 and 4H on 2026-11-13;
+the order is not recorded anywhere else in the repository. Nothing is
+planned after 4H.
 
 ### Scope of open milestones
 
-**H1, Agent Observability & Efficiency.**
-- Objective: local, read-only metrics for Claude Code sessions: tokens by
-  category, active and wall-clock time, activity, estimated cost from a
-  versioned table, and verification quality, per milestone
-  (`tools/harness_metrics/`, `docs/metrics/README.md`).
-- Decisions: D1–D7 and D9 as proposed; D8 amended: real session ids and
-  paths stay in the Git-ignored `.harness/metrics.local.toml`; committed
-  snapshots use milestone ids only.
-- Remaining: the maintainer reviews the inferred 4E, 4F and 4G boundaries,
-  enters pricing rates if estimates are wanted, and authorizes the commit.
-- Out of scope: Job Radar application changes, network access, new
-  dependencies, automatic attribution, billing data.
+**4H, Crawl Run Reporting.**
+- Objective: let a user inspect recent crawl runs and their per-company
+  results without writing SQL, read-only, reusing the `job-radar jobs`
+  patterns; no migration, no ingestion change.
+- Status: contract and the H2 Experiment 001 protocol approved on
+  2026-11-14. The commit that adds them
+  (`git log --format=%h -F --grep='docs(harness): finalize 4H contract and H2 evaluation protocol'`)
+  is the experiment's baseline. Next: a separate evaluator session writes
+  the held-out acceptance tests outside the repository. Implementation is
+  not authorized yet; it is to be done by a separate agent session under
+  the approved contract, without access to the held-out tests.
+- Approved documents (SHA-256):
+  - `docs/contracts/4H-crawl-run-reporting.md` v1.0:
+    `788ed0d55adb14b9a6cc1c89aeb20fae22ed988df0d477b9cf260d9c60dcdcea`
+  - `docs/metrics/experiments/001-4H-protocol.md` v1.0:
+    `0efcf3b9c8201ae9f23f774bf8670d90e46680f8c5ecfec2a2d2bc4a7a46b1cb`
 
 
 ## Completed milestones
 
 Most recent first. Commits and evidence are in `DEVELOPMENT-LOG.md`.
 
+- **H1**: local, read-only Claude Code session metrics per milestone
+  (`tools/harness_metrics/`): deduplicated token categories, active and
+  wall-clock time, versioned pricing (no rates yet, so costs are unknown),
+  local milestone segments, an outcomes ledger, sanitized snapshots for 4E,
+  4F and 4G (boundaries reviewed) (`f3f58ca`)
 - **4G**: deactivation on verified absence (ADR-0017): absent jobs of a
   successful, completeness-verified crawl are deactivated in the company's
   transaction behind five guards, reactivated on reappearance; migration

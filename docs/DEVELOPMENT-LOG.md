@@ -27,8 +27,9 @@ harness milestones.
 
 ## H1: Agent Observability & Efficiency
 
-- **Status:** implemented and verified without the database, awaiting the
-  maintainer's review and commit. Started 2026-11-13 on explicit approval.
+- **Status:** complete, 2026-11-13. Started 2026-11-13 on explicit approval.
+  (Recorded before the commit as "awaiting the maintainer's review and
+  commit"; corrected after the maintainer reviewed and the commit landed.)
 - **Objective:** measure token usage, time, activity, estimated cost and
   verification quality of Claude Code sessions per milestone, locally and
   read-only, without coupling to Job Radar (`tools/harness_metrics/`,
@@ -101,9 +102,21 @@ harness milestones.
   home path, account identifier or key; `.harness/` is Git-ignored.
   Integration: not applicable (H1 touches no database code) and not run.
   DOC-IMPACT: PASS. Only this bullet changed after the gate run.
-- **Commit:** not yet committed.
-- **Follow-up:** maintainer review of the inferred boundaries; pricing rates;
-  an escaped-defect check per milestone.
+- **Closure (2026-11-13):** the maintainer reviewed and approved the 4E
+  (turns 2–7), 4F (8–13) and 4G (14–19) boundaries, now `reviewed` in the
+  local configuration. The three snapshots were regenerated; compared field
+  by field with the committed ones, the only changes are `boundary.status`
+  (`inferred` to `reviewed`) and the removal of the
+  `boundary_inferred_not_reviewed` gap. Pricing is unchanged: no rates, so
+  costs stay unknown. ccusage was assessed and not adopted.
+- **Commit:** `f3f58caf663e9d105f27bac1e6fbac8cb6063f20`
+  (`feat(harness): add local Claude Code observability and milestone
+  metrics`). The snapshot regeneration and this closure were committed
+  with the approved 4H contract
+  (`git log --format=%h -F --grep='docs(harness): finalize 4H contract and H2 evaluation protocol'`).
+- **Follow-up:** pricing rates (the maintainer, from the official page,
+  including whether long requests are priced differently); an
+  escaped-defect check per milestone.
 
 ## 4G: Deactivation on verified absence
 
